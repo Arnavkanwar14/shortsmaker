@@ -38,6 +38,11 @@ which tries them in this order):
 Without any of these the pipeline still completes using heuristics and a
 template script — an LLM just makes the commentary genuinely good.
 
+**Where to put API keys:** copy `.env.example` to `.env` in the project root
+and paste your key(s) there (the file is gitignored). Environment variables
+work too and take precedence: `setx GROQ_API_KEY "gsk_..."` on Windows
+(then open a new terminal), or `export GROQ_API_KEY=...` on mac/linux.
+
 Other optional extras:
 - **mediapipe** for face-aware cropping (`pip install mediapipe`); otherwise
   center crop.

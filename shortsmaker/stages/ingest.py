@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..config import Config
-from ..util import ffprobe_video, run_ffmpeg
+from ..util import ffmpeg_location_for_ytdlp, ffprobe_video, run_ffmpeg
 
 log = logging.getLogger("shortsmaker")
 
@@ -29,6 +29,9 @@ def download(url: str, dest_dir: Path) -> Path:
         "quiet": True,
         "no_warnings": True,
     }
+    ffloc = ffmpeg_location_for_ytdlp()
+    if ffloc:
+        opts["ffmpeg_location"] = ffloc
     log.info("downloading %s ...", url)
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])

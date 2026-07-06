@@ -85,6 +85,24 @@ class Config:
                 setattr(self, k, v)
 
 
+def _load_dotenv() -> None:
+    """Load KEY=value lines from a .env file (project root, then cwd) into
+    os.environ, without overriding variables that are already set."""
+    for candidate in (Path(__file__).resolve().parent.parent / ".env",
+                      Path.cwd() / ".env"):
+        if not candidate.is_file():
+            continue
+        for line in candidate.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+
+
+_load_dotenv()
+
+
 def groq_api_key() -> str:
     return os.environ.get("GROQ_API_KEY", "")
 

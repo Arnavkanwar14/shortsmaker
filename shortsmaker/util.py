@@ -48,6 +48,26 @@ def ffmpeg_exe() -> str:
     return cand
 
 
+def ffmpeg_location_for_ytdlp() -> str | None:
+    """yt-dlp needs an executable literally named `ffmpeg` to merge
+    video+audio streams. If ffmpeg is not on PATH, copy the bundled
+    imageio-ffmpeg binary (which has a versioned name) into a cache dir
+    under the canonical name and return that dir; None if PATH has it."""
+    import os
+    if shutil.which("ffmpeg"):
+        return None
+    exe = Path(ffmpeg_exe())
+    if exe.stem.lower() == "ffmpeg":
+        return str(exe.parent)
+    cache = Path.home() / ".cache" / "shortsmaker" / "ffmpeg"
+    target = cache / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if not target.exists() or target.stat().st_size != exe.stat().st_size:
+        cache.mkdir(parents=True, exist_ok=True)
+        log.info("staging bundled ffmpeg for yt-dlp (one-time copy) ...")
+        shutil.copy2(exe, target)
+    return str(cache)
+
+
 def run_ffmpeg(args: list[str], cwd: Path | None = None) -> None:
     cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", *args]
     log.debug("ffmpeg %s", " ".join(args))
