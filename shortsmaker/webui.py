@@ -127,6 +127,50 @@ def job_status(job_id: str):
     return JSONResponse(resp)
 
 
+@app.get("/api/runs")
+def list_runs():
+    """Library view: every past run that produced a manifest."""
+    import json
+    runs = []
+    for mf in sorted(RUNS_DIR.glob("*/manifest.json"),
+                     key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            m = json.loads(mf.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        clips = []
+        for c in m.get("clips", []):
+            c = dict(c)
+            if c.get("file"):
+                c["url"] = f"/runs/{m['run_id']}/" + c["file"].replace("\\", "/")
+            clips.append(c)
+        runs.append({
+            "run_id": m.get("run_id", mf.parent.name),
+            "input": m.get("input", ""),
+            "created": m.get("created", ""),
+            "settings": m.get("settings", {}),
+            "clips": clips,
+            "cost": m.get("saas_cost_equivalent", {}).get("total_credits_equivalent"),
+        })
+    return runs
+
+
+@app.delete("/api/runs/{run_id}")
+def delete_run(run_id: str):
+    """Delete a run folder (they hold the downloaded source, so they're big)."""
+    import shutil
+    if "/" in run_id or "\\" in run_id or run_id.startswith((".", "_")):
+        raise HTTPException(400, "bad run id")
+    target = RUNS_DIR / run_id
+    if not target.is_dir() or not (target / "manifest.json").exists():
+        raise HTTPException(404, "unknown run")
+    if any(j["run_id"] == run_id and j["status"] in ("queued", "running")
+           for j in JOBS.values()):
+        raise HTTPException(409, "run is currently in progress")
+    shutil.rmtree(target)
+    return {"deleted": run_id}
+
+
 @app.get("/api/voices")
 def voices():
     # curated shortlist; full list via `python -m shortsmaker voices`

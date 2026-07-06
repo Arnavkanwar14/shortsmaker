@@ -27,9 +27,10 @@ def _prompt(cfg: Config, clip_text: str, duration: float) -> str:
         "You are writing a short-form voiceover script to accompany this clip.\n"
         f"Clip transcript (original dialogue):\n\"\"\"\n{clip_text}\n\"\"\"\n\n"
         "Write a punchy hook for the first 3 seconds, then narrate/comment on "
-        "what's happening in an energetic, TikTok-style tone. Keep it under "
-        f"{max_words} words for a {duration:.0f}-second clip at about "
-        f"{cfg.words_per_second} words/sec. Do NOT just repeat the original "
+        "what's happening in an energetic, TikTok-style tone. Write "
+        f"{int(max_words * 0.75)}-{max_words} words (no fewer -- the voiceover "
+        f"must fill most of the {duration:.0f}-second clip at about "
+        f"{cfg.words_per_second} words/sec). Do NOT just repeat the original "
         "dialogue -- add reaction and insight. End with a line that makes the "
         "viewer want to comment or rewatch."
     )
