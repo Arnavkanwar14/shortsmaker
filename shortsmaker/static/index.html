@@ -41,6 +41,13 @@
   .hint { font-size: 11px; color: #6b7280; margin-top: 4px; line-height: 1.45; }
   .drop { border: 2px dashed #333a4b; border-radius: 10px; padding: 20px;
           text-align: center; color: var(--muted); cursor: pointer; font-size: 14px; }
+  .modes { display: flex; gap: 10px; }
+  .mode { flex: 1; border: 2px solid #2c3140; border-radius: 10px; padding: 12px;
+          cursor: pointer; background: var(--panel2); transition: border-color .15s; }
+  .mode:hover { border-color: #46506a; }
+  .mode.selected { border-color: var(--accent); background: #10202a; }
+  .mode b { display: block; font-size: 13px; margin-bottom: 5px; color: var(--text); }
+  .mode span { font-size: 11px; color: var(--muted); line-height: 1.45; }
   .drop.hover, .drop:hover { border-color: var(--accent); }
   .drop.hasfile { border-color: var(--ok); color: var(--ok); }
   .row { display: flex; gap: 12px; }
@@ -122,12 +129,33 @@
           <div><label>Target length (s)</label>
             <input type="number" id="duration" min="20" max="90" value="45"></div>
         </div>
+        <label>Audio &amp; captions mode</label>
+        <div class="modes">
+          <div class="mode selected" id="mode-caption" onclick="setMode(false)">
+            <b>&#127908; Video's own voice + captions</b>
+            <span>Original audio untouched. Every spoken word becomes an
+            animated caption, perfectly timed.</span>
+          </div>
+          <div class="mode" id="mode-vo" onclick="setMode(true)">
+            <b>&#129302; AI voiceover commentary</b>
+            <span>AI reads the context, writes a script, and narrates over
+            the clip. Captions follow the AI voice.</span>
+          </div>
+        </div>
+        <div id="voSettings" style="display:none">
+          <label>Voice</label>
+          <select id="voice"></select>
+          <div class="row">
+            <div><label>Voiceover volume %</label>
+              <input type="number" id="vo_volume" min="0" max="200" value="100"></div>
+            <div><label>Original audio %</label>
+              <input type="number" id="bg_volume" min="0" max="200" value="18"></div>
+          </div>
+          <div class="hint">The original audio is ducked (default 18%) so the
+            narration stays listenable &mdash; raise it if the source sound
+            matters, e.g. 40-60% for gameplay.</div>
+        </div>
         <div class="row">
-          <div><label>AI voiceover</label>
-            <select id="voiceover" onchange="voToggle()">
-              <option value="true" selected>on</option>
-              <option value="false">off &mdash; caption original speech</option>
-            </select></div>
           <div><label>Content type</label>
             <select id="content_type">
               <option value="auto" selected>auto-detect</option>
@@ -135,24 +163,13 @@
               <option value="action">gaming / action / sports</option>
               <option value="funny">funny moments</option>
             </select></div>
+          <div><label>Snappy cut (dead air/ums)</label>
+            <select id="trim_silence">
+              <option value="auto" selected>auto</option>
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select></div>
         </div>
-        <div class="row">
-          <div><label>Voiceover volume %</label>
-            <input type="number" id="vo_volume" min="0" max="200" value="100"></div>
-          <div><label>Original audio %</label>
-            <input type="number" id="bg_volume" min="0" max="200" value="18"></div>
-        </div>
-        <label>Snappy cut (dead air + um/uh removal)</label>
-        <select id="trim_silence">
-          <option value="auto" selected>auto &mdash; on for speech-driven clips</option>
-          <option value="on">on</option>
-          <option value="off">off</option>
-        </select>
-        <div class="hint">With voiceover on, the original audio is ducked
-          (default 18%) so the narration stays listenable &mdash; raise it if the
-          source sound matters, e.g. 40-60% for gameplay.</div>
-        <label>Voice</label>
-        <select id="voice"></select>
         <div class="row">
           <div><label>Captions</label>
             <select id="style">
@@ -220,11 +237,12 @@ fetch('/api/voices').then(r => r.json()).then(vs => {
   $('voice').innerHTML = vs.map(v => `<option>${v}</option>`).join('');
 });
 
-function voToggle() {
-  const on = $('voiceover').value === 'true';
-  $('voice').disabled = !on;
-  $('vo_volume').disabled = !on;
-  $('bg_volume').value = on ? 18 : 100;
+let voMode = false;   // default: caption the video's own voice
+function setMode(vo) {
+  voMode = vo;
+  $('mode-caption').classList.toggle('selected', !vo);
+  $('mode-vo').classList.toggle('selected', vo);
+  $('voSettings').style.display = vo ? 'block' : 'none';
 }
 
 $('drop').onclick = () => $('file').click();
@@ -245,10 +263,12 @@ $('go').onclick = async () => {
   fd.append('url', $('url').value.trim());
   if (pickedFile) fd.append('file', pickedFile);
   for (const k of ['num_clips','duration','voice','style','llm_provider',
-                   'whisper_model','voiceover','content_type','trim_silence'])
+                   'whisper_model','content_type','trim_silence'])
     fd.append(k, $(k).value);
+  fd.append('voiceover', voMode ? 'true' : 'false');
   fd.append('vo_volume', $('vo_volume').value / 100);
-  fd.append('bg_volume', $('bg_volume').value / 100);
+  // caption mode: -1 lets the backend keep the original audio at 100%
+  fd.append('bg_volume', voMode ? $('bg_volume').value / 100 : -1);
   if (!$('url').value.trim() && !pickedFile) { alert('Give a URL or a file'); return; }
 
   $('go').disabled = true;
