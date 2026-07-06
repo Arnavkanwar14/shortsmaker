@@ -12,9 +12,22 @@ from pathlib import Path
 
 from .config import Config
 from .stages import assemble, cleanup, highlights, ingest, script_gen, transcribe, tts
-from .util import CostLedger, media_duration, write_json
+from .util import CostLedger, media_duration, read_json, write_json
 
 log = logging.getLogger("shortsmaker")
+
+
+def source_caption_words(transcript: dict, clip: dict) -> list[dict]:
+    """Word timestamps of the original speech inside a clip window,
+    shifted so 0 = clip start (what the .ass captioner expects)."""
+    words = []
+    for seg in transcript["segments"]:
+        for w in seg.get("words", []):
+            if w["start"] >= clip["start"] and w["end"] <= clip["end"]:
+                words.append({"start": round(w["start"] - clip["start"], 3),
+                              "end": round(w["end"] - clip["start"], 3),
+                              "text": w["text"]})
+    return words
 
 
 def derive_run_id(input_str: str) -> str:
@@ -36,6 +49,8 @@ def run(cfg: Config) -> dict:
     # ---- stages 1-3 (whole-video) ----
     video = ingest.run(cfg)
     src_minutes = media_duration(video) / 60
+    meta_file = run_dir / "meta.json"
+    meta = read_json(meta_file) if meta_file.exists() else {}
 
     transcript = transcribe.run(cfg, video)
     ledger.add("transcribe", src_minutes)
@@ -60,14 +75,21 @@ def run(cfg: Config) -> dict:
             "status": "ok",
         }
         try:
-            script = script_gen.run(cfg, clip, clip_dir)
-            ledger.add("script", 1)
-            entry["script"] = script
+            if cfg.voiceover:
+                context = script_gen.clip_context(transcript, clip, meta)
+                script = script_gen.run(cfg, clip, clip_dir, context)
+                ledger.add("script", 1)
+                entry["script"] = script
 
-            vo_audio, vo_words = tts.run(cfg, script, clip, clip_dir)
-            ledger.add("tts", 1)
+                vo_audio, caption_words = tts.run(cfg, script, clip, clip_dir)
+                ledger.add("tts", 1)
+            else:
+                # no voiceover: caption the original speech instead,
+                # using the source transcript's word timestamps
+                vo_audio = None
+                caption_words = source_caption_words(transcript, clip)
 
-            final = assemble.run(cfg, video, clip, clip_dir, vo_audio, vo_words)
+            final = assemble.run(cfg, video, clip, clip_dir, vo_audio, caption_words)
             ledger.add("assemble", 1)
             entry["file"] = str(final.relative_to(run_dir))
         except Exception as e:
@@ -84,7 +106,9 @@ def run(cfg: Config) -> dict:
         "settings": {"num_clips": cfg.num_clips, "duration": cfg.duration,
                      "voice": cfg.voice, "style": cfg.style,
                      "llm_provider": cfg.llm_provider,
-                     "tts_engine": cfg.tts_engine},
+                     "tts_engine": cfg.tts_engine,
+                     "voiceover": cfg.voiceover,
+                     "content_type": cfg.content_type},
         "clips": manifest_clips,
         "saas_cost_equivalent": ledger.as_dict(),
     }

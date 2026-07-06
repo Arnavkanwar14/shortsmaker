@@ -77,6 +77,10 @@ async def create_job(
     style: str = Form("kinetic"),
     llm_provider: str = Form("auto"),
     whisper_model: str = Form("small"),
+    voiceover: str = Form("true"),
+    vo_volume: float = Form(1.0),
+    bg_volume: float = Form(-1.0),
+    content_type: str = Form("auto"),
 ):
     if not url and (file is None or not file.filename):
         raise HTTPException(400, "provide a URL or upload a file")
@@ -95,7 +99,10 @@ async def create_job(
     cfg = Config(input=input_src, workdir=str(RUNS_DIR),
                  num_clips=num_clips, duration=duration, voice=voice,
                  style=style, llm_provider=llm_provider,
-                 whisper_model=whisper_model)
+                 whisper_model=whisper_model,
+                 voiceover=voiceover.lower() in ("1", "true", "yes"),
+                 vo_volume=vo_volume, bg_audio_volume=bg_volume,
+                 content_type=content_type)
     cfg.min_duration = max(duration - 15, 15)
     cfg.max_duration = duration + 15
     cfg.run_id = derive_run_id(cfg.input)
@@ -173,8 +180,11 @@ def delete_run(run_id: str):
 
 @app.get("/api/voices")
 def voices():
-    # curated shortlist; full list via `python -m shortsmaker voices`
+    # curated shortlist; full list via `python -m shortsmaker voices`.
+    # Multilingual voices first -- newest generation, far more natural.
     return [
+        "en-US-AndrewMultilingualNeural", "en-US-BrianMultilingualNeural",
+        "en-US-AvaMultilingualNeural", "en-US-EmmaMultilingualNeural",
         "en-US-GuyNeural", "en-US-ChristopherNeural", "en-US-JennyNeural",
         "en-US-AriaNeural", "en-GB-RyanNeural", "en-AU-WilliamNeural",
         "en-IN-PrabhatNeural", "en-IN-NeerjaNeural", "hi-IN-MadhurNeural",

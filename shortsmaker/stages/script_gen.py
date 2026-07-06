@@ -1,8 +1,10 @@
 """STAGE 4 -- GENERATE COMMENTARY SCRIPT per selected window.
 
 Uses the configured LLM (Ollama local by default, Groq free tier optional).
-If no LLM is reachable, falls back to a template script built from the
-clip's own transcript so the pipeline still completes.
+The prompt carries the video's title and the dialogue just before/after the
+clip so the narration reacts to what's actually happening instead of
+guessing from an isolated snippet. If no LLM is reachable, falls back to a
+template script built from the clip's own transcript.
 
 Output per clip: clips/clip_NN/script.txt
 """
@@ -16,23 +18,43 @@ from ..config import Config
 
 log = logging.getLogger("shortsmaker")
 
-SYSTEM = ("You write short-form voiceover scripts for TikTok/Reels/Shorts. "
-          "Output ONLY the words to be spoken -- no stage directions, no "
-          "quotes, no emoji, no hashtags, no markdown.")
+SYSTEM = (
+    "You write voiceover scripts for viral TikTok/Reels/Shorts clips. "
+    "Sound like a real person hyping a moment to a friend: conversational, "
+    "contractions, short punchy sentences, present tense, specific to what's "
+    "actually happening in THIS clip. Reference concrete details (names, "
+    "numbers, objects, what someone says or does) -- never generic filler "
+    "like 'you won't believe this' or 'wait for it'. "
+    "Output ONLY the words to be spoken -- no stage directions, no quotes, "
+    "no emoji, no hashtags, no markdown."
+)
 
 
-def _prompt(cfg: Config, clip_text: str, duration: float) -> str:
+def _prompt(cfg: Config, clip: dict, duration: float, context: dict) -> str:
     max_words = int(duration * cfg.words_per_second)
+    parts = []
+    if context.get("title"):
+        parts.append(f"The video is titled: \"{context['title']}\"")
+        if context.get("uploader"):
+            parts[-1] += f" (channel: {context['uploader']})"
+    if context.get("before_text"):
+        parts.append(f"Dialogue just BEFORE this clip (for context only):\n"
+                     f"{context['before_text']}")
+    parts.append(f"The clip's own dialogue:\n\"\"\"\n{clip['text'] or '(no speech -- action footage)'}\n\"\"\"")
+    if context.get("after_text"):
+        parts.append(f"Dialogue just AFTER this clip (for context only):\n"
+                     f"{context['after_text']}")
+    ctx_block = "\n\n".join(parts)
     return (
-        "You are writing a short-form voiceover script to accompany this clip.\n"
-        f"Clip transcript (original dialogue):\n\"\"\"\n{clip_text}\n\"\"\"\n\n"
-        "Write a punchy hook for the first 3 seconds, then narrate/comment on "
-        "what's happening in an energetic, TikTok-style tone. Write "
-        f"{int(max_words * 0.75)}-{max_words} words (no fewer -- the voiceover "
-        f"must fill most of the {duration:.0f}-second clip at about "
-        f"{cfg.words_per_second} words/sec). Do NOT just repeat the original "
-        "dialogue -- add reaction and insight. End with a line that makes the "
-        "viewer want to comment or rewatch."
+        f"You are writing the voiceover for a {duration:.0f}-second vertical "
+        f"short cut from a longer video.\n\n{ctx_block}\n\n"
+        "Write the narration: a hook in the first sentence that names what's "
+        "concretely at stake, then react to and comment on what's happening. "
+        f"Write {int(max_words * 0.75)}-{max_words} words (no fewer -- the "
+        f"voiceover must fill most of the clip at about "
+        f"{cfg.words_per_second} words/sec). Do NOT just repeat the "
+        "dialogue -- add reaction and insight a viewer wouldn't think of. "
+        "End with a line that makes the viewer want to comment or rewatch."
     )
 
 
@@ -45,9 +67,9 @@ def _clean(text: str) -> str:
 
 
 def _fallback_script(clip_text: str, max_words: int) -> str:
-    """No-LLM template: hook + condensed original content + CTA."""
+    """No-LLM template: condensed original content with light framing."""
     sentences = re.split(r"(?<=[.!?])\s+", clip_text)
-    body_budget = max(max_words - 16, 10)
+    body_budget = max(max_words - 12, 10)
     body, used = [], 0
     for s in sentences:
         w = len(s.split())
@@ -55,12 +77,28 @@ def _fallback_script(clip_text: str, max_words: int) -> str:
             break
         body.append(s)
         used += w
-    return ("Wait for this -- you won't believe what happens here. "
-            + " ".join(body)
-            + " Watch it again and tell me you caught that the first time.")
+    return ("Okay, watch this closely. " + " ".join(body)
+            + " Tell me you caught that the first time.")
 
 
-def run(cfg: Config, clip: dict, clip_dir) -> str:
+def clip_context(transcript: dict, clip: dict, meta: dict,
+                 context_words: int = 40) -> dict:
+    """Video title + the dialogue surrounding the clip window."""
+    before, after = [], []
+    for seg in transcript.get("segments", []):
+        if seg["end"] <= clip["start"]:
+            before.append(seg["text"])
+        elif seg["start"] >= clip["end"]:
+            after.append(seg["text"])
+    return {
+        "title": meta.get("title", ""),
+        "uploader": meta.get("uploader", ""),
+        "before_text": " ".join(" ".join(before).split()[-context_words:]),
+        "after_text": " ".join(" ".join(after).split()[:context_words]),
+    }
+
+
+def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None) -> str:
     out = clip_dir / "script.txt"
     if out.exists() and not cfg.force:
         log.info("script: %s exists, skipping", out)
@@ -68,8 +106,8 @@ def run(cfg: Config, clip: dict, clip_dir) -> str:
 
     duration = clip["end"] - clip["start"]
     max_words = int(duration * cfg.words_per_second)
-    reply = llm.complete(cfg, _prompt(cfg, clip["text"], duration), system=SYSTEM,
-                         max_tokens=max_words * 3)
+    reply = llm.complete(cfg, _prompt(cfg, clip, duration, context or {}),
+                         system=SYSTEM, max_tokens=max_words * 3)
     script = _clean(reply) if reply else ""
 
     if not script:

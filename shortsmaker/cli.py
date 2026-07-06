@@ -28,6 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--num-clips", dest="num_clips", type=int)
     r.add_argument("--duration", type=int, help="target clip seconds (30-60)")
     r.add_argument("--voice", help="edge-tts voice, e.g. en-US-GuyNeural")
+    r.add_argument("--voiceover", type=lambda s: s.lower() in ("1", "true", "yes"),
+                   help="true/false: AI voiceover; false keeps original audio "
+                        "and captions the source speech")
+    r.add_argument("--vo-volume", dest="vo_volume", type=float,
+                   help="voiceover loudness, 0..1 (default 1.0)")
+    r.add_argument("--bg-volume", dest="bg_audio_volume", type=float,
+                   help="original-audio loudness, 0..1 (default: auto -- 0.18 "
+                        "under a voiceover, 1.0 without)")
+    r.add_argument("--content-type", dest="content_type",
+                   choices=["auto", "talk", "action", "funny"],
+                   help="tunes highlight scoring; 'action' for gaming/sports")
     r.add_argument("--style", choices=["kinetic", "plain", "none"])
     r.add_argument("--clean", type=lambda s: s.lower() in ("1", "true", "yes"),
                    help="true/false: inpaint burned-in captions/watermarks (slow)")

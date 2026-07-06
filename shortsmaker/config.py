@@ -35,6 +35,9 @@ class Config:
     # ---- highlights ----
     scene_threshold: float = 27.0   # PySceneDetect ContentDetector threshold
     use_llm_highlights: bool = True # only if an LLM provider is reachable
+    content_type: str = "auto"      # auto | talk | action | funny
+                                    # action: gaming/sports -- scores cut
+                                    # density + loudness bursts over dialogue
 
     # ---- LLM (script + optional highlight ranking) ----
     llm_provider: str = "auto"      # auto | ollama | groq | gemini | none
@@ -44,16 +47,23 @@ class Config:
     gemini_model: str = "gemini-2.0-flash"        # free tier, needs GEMINI_API_KEY
     words_per_second: float = 2.5   # script length budget
 
-    # ---- TTS ----
+    # ---- TTS / voiceover ----
+    voiceover: bool = True          # off: keep original audio, captions come
+                                    # from the source speech instead of TTS
+    vo_volume: float = 1.0          # voiceover loudness (0..1+)
     tts_engine: str = "edge"        # edge | piper
-    voice: str = "en-US-GuyNeural"  # edge-tts voice
+    voice: str = "en-US-AndrewMultilingualNeural"  # edge-tts voice; the
+                                    # *MultilingualNeural voices are the newest
+                                    # generation and sound far less robotic
     piper_model: str = ""           # path to a .onnx piper voice, if using piper
 
     # ---- assemble ----
     style: str = "kinetic"          # kinetic | plain | none (captions style)
     out_width: int = 1080
     out_height: int = 1920
-    bg_audio_volume: float = 0.18   # duck original audio to ~18%
+    bg_audio_volume: float = -1.0   # original-audio volume; -1 = auto
+                                    # (ducked to 0.18 under a voiceover,
+                                    #  full 1.0 when voiceover is off)
     face_crop: bool = True          # mediapipe face-aware crop, else center
 
     # ---- cleanup (stage 7) ----

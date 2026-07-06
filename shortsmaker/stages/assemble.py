@@ -130,38 +130,50 @@ def crop_filter(cfg: Config, video: Path, clip: dict) -> str:
 
 # ----------------------------------------------------------------- main
 def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
-        vo_audio: Path, vo_words: list[dict]) -> Path:
+        vo_audio: Path | None, caption_words: list[dict]) -> Path:
+    """vo_audio None = no voiceover: original audio stays primary and
+    caption_words are the source speech instead of TTS words."""
     final = clip_dir / "final.mp4"
     if final.exists() and not cfg.force:
         log.info("assemble: final.mp4 exists, skipping")
         return final
     # ffmpeg runs with cwd=clip_dir (for the ass filter); inputs must be absolute
     video = video.resolve()
-    vo_audio = vo_audio.resolve()
+    if vo_audio is not None:
+        vo_audio = vo_audio.resolve()
 
     ass_file = clip_dir / "captions.ass"
-    write_ass(vo_words, ass_file, style=cfg.style)
+    write_ass(caption_words, ass_file, style=cfg.style)
 
     vf = crop_filter(cfg, video, clip)
-    with_captions = cfg.style != "none"
+    with_captions = cfg.style != "none" and caption_words
     # ffmpeg is run with cwd=clip_dir so the ass filter gets a plain relative
     # filename -- avoids Windows drive-colon escaping issues in filtergraphs.
     caption_part = f",ass={ass_file.name}" if with_captions else ""
 
+    # original-audio volume: explicit value, else ducked under a voiceover
+    # and untouched when the original audio is the only track
+    bg_vol = cfg.bg_audio_volume if cfg.bg_audio_volume >= 0 else (
+        0.18 if vo_audio is not None else 1.0)
+
     def build_args(caption: str) -> list[str]:
-        return [
-            "-ss", str(clip["start"]), "-to", str(clip["end"]),
-            "-i", str(video), "-i", str(vo_audio),
-            "-filter_complex",
-            f"[0:v]{vf}{caption}[v];"
-            f"[0:a]volume={cfg.bg_audio_volume}[bg];"
-            f"[1:a]apad[vo];"
-            f"[bg][vo]amix=inputs=2:duration=first:normalize=0[a]",
+        args = ["-ss", str(clip["start"]), "-to", str(clip["end"]),
+                "-i", str(video)]
+        if vo_audio is not None:
+            args += ["-i", str(vo_audio)]
+            afilter = (f"[0:a]volume={bg_vol}[bg];"
+                       f"[1:a]volume={cfg.vo_volume},apad[vo];"
+                       f"[bg][vo]amix=inputs=2:duration=first:normalize=0[a]")
+        else:
+            afilter = f"[0:a]volume={bg_vol}[a]"
+        args += [
+            "-filter_complex", f"[0:v]{vf}{caption}[v];{afilter}",
             "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k", "-shortest",
             "-movflags", "+faststart", final.name,
         ]
+        return args
 
     try:
         run_ffmpeg(build_args(caption_part), cwd=clip_dir)

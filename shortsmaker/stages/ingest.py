@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..config import Config
-from ..util import ffmpeg_location_for_ytdlp, ffprobe_video, run_ffmpeg
+from ..util import ffmpeg_location_for_ytdlp, ffprobe_video, run_ffmpeg, write_json
 
 log = logging.getLogger("shortsmaker")
 
@@ -38,7 +38,12 @@ def download(url: str, dest_dir: Path, max_height: int = 1080) -> Path:
         opts["ffmpeg_location"] = ffloc
     log.info("downloading %s ...", url)
     with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+        info = ydl.extract_info(url, download=True)
+    write_json(dest_dir / "meta.json", {
+        "title": info.get("title", ""),
+        "uploader": info.get("uploader", ""),
+        "description": (info.get("description") or "")[:500],
+    })
     files = sorted(dest_dir.glob("source.*"), key=lambda p: p.stat().st_size, reverse=True)
     if not files:
         raise RuntimeError("yt-dlp reported success but no file was written")
@@ -63,6 +68,9 @@ def run(cfg: Config) -> Path:
         source = run_dir / f"source{src.suffix.lower()}"
         if not source.exists():
             shutil.copy2(src, source)
+        write_json(run_dir / "meta.json",
+                   {"title": src.stem.replace("_", " ").replace("-", " "),
+                    "uploader": "", "description": ""})
 
     info = ffprobe_video(source)
     log.info("source: %dx%d, %.1fs, %.1f fps", info["width"], info["height"],

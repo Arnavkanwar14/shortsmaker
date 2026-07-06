@@ -83,7 +83,61 @@ def completeness_score(first_text: str, last_text: str) -> float:
     return score
 
 
+def cut_density_score(cuts: list[float], start: float, end: float) -> float:
+    """Fast cutting / rapid shot changes signal action. ~4 cuts/10s -> 1.0."""
+    n = sum(1 for c in cuts if start <= c <= end)
+    per10 = n / max((end - start) / 10.0, 0.1)
+    return min(per10 / 4.0, 1.0)
+
+
+def energy_burst_score(times, rms, start: float, end: float) -> float:
+    """Sudden loudness spikes (explosions, shouting, crowd pops) vs the
+    track's own baseline. Peak z-score inside the window, capped."""
+    mask = (times >= start) & (times <= end)
+    if not mask.any():
+        return 0.0
+    mu, sigma = float(rms.mean()), float(rms.std()) or 1e-9
+    z = (float(rms[mask].max()) - mu) / sigma
+    return min(max(z, 0.0) / 4.0, 1.0)
+
+
+# Signal weights per content profile. "talk" is the original podcast/vlog
+# tuning; "action" (gaming, sports) trusts the audio+editing rhythm over
+# dialogue; "funny" hunts laughter and spikes.
+PROFILES = {
+    "talk":   {"energy": .30, "keywords": .30, "speech_rate_dev": .10,
+               "completeness": .20, "scene_aligned": .10,
+               "cut_density": .00, "energy_burst": .00},
+    "action": {"energy": .25, "keywords": .05, "speech_rate_dev": .00,
+               "completeness": .05, "scene_aligned": .10,
+               "cut_density": .25, "energy_burst": .30},
+    "funny":  {"energy": .15, "keywords": .35, "speech_rate_dev": .10,
+               "completeness": .10, "scene_aligned": .05,
+               "cut_density": .00, "energy_burst": .25},
+}
+
+
+def detect_content_type(segments: list[dict], duration: float) -> str:
+    """Cheap auto-detect: sparse speech -> action; lots of laughter -> funny."""
+    words = sum(len(s["text"].split()) for s in segments)
+    wpm = words / max(duration / 60.0, 0.1)
+    laughs = sum(len(LAUGHTER.findall(s["text"])) for s in segments)
+    if wpm < 50:
+        return "action"
+    if laughs >= 3:
+        return "funny"
+    return "talk"
+
+
 # ----------------------------------------------------------- windowing
+def _window_texts(segments: list[dict], start: float, end: float) -> tuple[str, str, str]:
+    """(joined text, first segment text, last segment text) inside a span."""
+    inside = [s for s in segments if s["start"] < end and s["end"] > start]
+    if not inside:
+        return "", "", ""
+    return " ".join(s["text"] for s in inside), inside[0]["text"], inside[-1]["text"]
+
+
 def build_windows(segments: list[dict], cfg: Config) -> list[dict]:
     """Grow candidate windows from each segment start until min..max duration."""
     windows = []
@@ -94,13 +148,31 @@ def build_windows(segments: list[dict], cfg: Config) -> list[dict]:
         while j < n and segments[j]["end"] - start < cfg.min_duration:
             j += 1
         while j < n and segments[j]["end"] - start <= cfg.max_duration:
-            windows.append({"start": start, "end": segments[j]["end"],
-                            "seg_range": (i, j)})
+            windows.append({
+                "start": start, "end": segments[j]["end"],
+                "text": " ".join(s["text"] for s in segments[i:j + 1]),
+                "first_text": segments[i]["text"], "last_text": segments[j]["text"],
+            })
             # prefer stopping at sentence ends: keep only sentence-final
             # extensions after the first valid one
             if SENTENCE_END.search(segments[j]["text"]):
                 break
             j += 1
+    return windows
+
+
+def build_time_windows(segments: list[dict], duration: float, cfg: Config) -> list[dict]:
+    """Transcript-independent sliding windows for low-speech content
+    (gameplay, sports, montages) where dialogue can't anchor the clips."""
+    windows = []
+    span = float(cfg.duration or (cfg.min_duration + cfg.max_duration) / 2)
+    t = 0.0
+    while t + cfg.min_duration <= duration:
+        end = min(t + span, duration)
+        text, first, last = _window_texts(segments, t, end)
+        windows.append({"start": t, "end": end, "text": text,
+                        "first_text": first, "last_text": last})
+        t += 5.0
     return windows
 
 
@@ -111,37 +183,34 @@ def snap_to_scene(t: float, cuts: list[float], tol: float = 1.5) -> tuple[float,
     return t, False
 
 
-def score_windows(windows, segments, cuts, times, rms, cfg: Config) -> list[dict]:
-    speech_rates = []
-    for w in windows:
-        i, j = w["seg_range"]
-        text = " ".join(s["text"] for s in segments[i:j + 1])
-        dur = w["end"] - w["start"]
-        speech_rates.append(len(text.split()) / max(dur, 1))
+def score_windows(windows, cuts, times, rms, cfg: Config, profile: str) -> list[dict]:
+    weights = PROFILES[profile]
+    speech_rates = [len(w["text"].split()) / max(w["end"] - w["start"], 1)
+                    for w in windows]
     mean_rate = float(np.mean(speech_rates)) if speech_rates else 1.0
     std_rate = float(np.std(speech_rates)) or 1.0
 
     scored = []
     for w, rate in zip(windows, speech_rates):
-        i, j = w["seg_range"]
-        text = " ".join(s["text"] for s in segments[i:j + 1])
         start, on_cut = snap_to_scene(w["start"], cuts)
         signals = {
             "energy": window_energy_pct(times, rms, w["start"], w["end"]),
-            "keywords": keyword_score(text),
+            "keywords": keyword_score(w["text"]),
             "speech_rate_dev": min(abs(rate - mean_rate) / std_rate / 2.0, 1.0),
-            "completeness": completeness_score(segments[i]["text"], segments[j]["text"]),
+            "completeness": completeness_score(w["first_text"], w["last_text"]),
             "scene_aligned": 1.0 if on_cut else 0.0,
+            "cut_density": cut_density_score(cuts, w["start"], w["end"]),
+            "energy_burst": energy_burst_score(times, rms, w["start"], w["end"]),
         }
-        score = (0.30 * signals["energy"] + 0.30 * signals["keywords"]
-                 + 0.10 * signals["speech_rate_dev"]
-                 + 0.20 * signals["completeness"] + 0.10 * signals["scene_aligned"])
+        score = sum(weights[k] * v for k, v in signals.items())
         scored.append({
             "start": round(start, 2), "end": round(w["end"], 2),
-            "score": round(score, 4), "signals": {k: round(v, 3) for k, v in signals.items()},
-            "text": text,
-            "reason": "heuristic: " + (", ".join(
-                k for k, v in signals.items() if v >= 0.6) or "mixed signals"),
+            "score": round(score, 4),
+            "signals": {k: round(v, 3) for k, v in signals.items() if weights[k]},
+            "text": w["text"],
+            "reason": f"heuristic[{profile}]: " + (", ".join(
+                k for k, v in signals.items() if v >= 0.6 and weights[k] > 0)
+                or "mixed signals"),
         })
     return scored
 
@@ -159,41 +228,73 @@ def pick_non_overlapping(scored: list[dict], k: int) -> list[dict]:
 
 
 # ------------------------------------------------------------ LLM pass
-def llm_rerank(cfg: Config, segments: list[dict], candidates: list[dict]) -> list[dict]:
+CONTENT_HINTS = {
+    "talk": "strong hook, complete thought, emotional or surprising content",
+    "action": "the most intense action: kills, clutch plays, crashes, saves, "
+              "big reactions -- editing rhythm and excitement matter more than "
+              "complete sentences",
+    "funny": "the funniest moments: laughter, absurd reactions, comedic "
+             "timing, things people would tag a friend under",
+}
+
+
+def llm_rerank(cfg: Config, segments: list[dict], candidates: list[dict],
+               duration: float, profile: str) -> list[dict]:
     lines = [f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segments]
-    transcript_block = "\n".join(lines)
+    transcript_block = "\n".join(lines) or "(almost no speech in this video)"
     if len(transcript_block) > 24000:            # keep local models happy
         transcript_block = transcript_block[:24000]
     prompt = (
-        "Here is a timestamped transcript of a video.\n\n"
+        f"Here is a timestamped transcript of a {duration:.0f}-second video.\n\n"
         f"{transcript_block}\n\n"
-        f"Identify the {cfg.num_clips} most self-contained, high-interest "
-        f"{cfg.min_duration}-{cfg.max_duration} second segments that would work as "
-        "standalone short clips (strong hook, complete thought, emotional or "
-        "surprising content). Respond with ONLY a JSON array like: "
-        '[{"start": 12.5, "end": 55.0, "reason": "one line"}]'
+        f"Identify the {cfg.num_clips} best {cfg.min_duration}-{cfg.max_duration} "
+        f"second segments to post as standalone viral short clips. "
+        f"Prioritize: {CONTENT_HINTS[profile]}. Respond with ONLY a JSON array "
+        'like: [{"start": 12.5, "end": 55.0, "reason": "one line"}]'
     )
     reply = llm.complete(cfg, prompt, system="You find viral moments in videos.")
     picks = llm.extract_json_array(reply)
     if not picks:
         log.info("LLM highlight pass unavailable/unparseable; using heuristics only")
         return candidates
-    boosted = []
+
+    boosted, matched_picks = [], set()
     for c in candidates:
         c = dict(c)
-        for p in picks:
+        for pi, p in enumerate(picks):
             try:
                 ps, pe = float(p["start"]), float(p["end"])
             except (KeyError, TypeError, ValueError):
                 continue
             overlap = min(c["end"], pe) - max(c["start"], ps)
-            if overlap > 0.5 * (c["end"] - c["start"]):
+            if overlap > 0.3 * (c["end"] - c["start"]):
                 c["score"] = round(c["score"] + 0.5, 4)
                 c["reason"] = f"LLM: {p.get('reason', 'selected by LLM')}"
+                matched_picks.add(pi)
                 break
         boosted.append(c)
-    log.info("LLM highlight pass boosted %d candidate windows",
-             sum(1 for b in boosted if b["reason"].startswith("LLM")))
+
+    # LLM picks that matched no heuristic candidate become candidates
+    # themselves -- the model may see gold where the heuristics saw noise
+    for pi, p in enumerate(picks):
+        if pi in matched_picks:
+            continue
+        try:
+            ps, pe = float(p["start"]), float(p["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        ps = max(0.0, min(ps, duration - cfg.min_duration))
+        pe = min(max(pe, ps + cfg.min_duration), min(ps + cfg.max_duration, duration))
+        if pe - ps < cfg.min_duration * 0.8:
+            continue
+        text, first, last = _window_texts(segments, ps, pe)
+        boosted.append({
+            "start": round(ps, 2), "end": round(pe, 2), "score": 0.65,
+            "signals": {}, "text": text,
+            "reason": f"LLM: {p.get('reason', 'selected by LLM')}",
+        })
+    log.info("LLM highlight pass: %d candidates boosted, %d new windows added",
+             len(matched_picks), len(picks) - len(matched_picks))
     return boosted
 
 
@@ -205,22 +306,31 @@ def run(cfg: Config, video: Path, transcript: dict) -> list[dict]:
         return read_json(out)
 
     segments = [s for s in transcript["segments"] if s["text"].strip()]
-    if not segments:
-        raise RuntimeError("transcript is empty -- nothing to clip")
 
     cuts = detect_scenes(video, cfg.scene_threshold)
     wav = cfg.run_dir / "audio_16k.wav"
     times, rms = audio_energy(wav)
+    duration = float(times[-1]) if len(times) else 0.0
+
+    profile = cfg.content_type
+    if profile not in PROFILES:
+        profile = detect_content_type(segments, duration)
+        log.info("content type auto-detected: %s", profile)
+    else:
+        log.info("content type: %s (user-set)", profile)
 
     windows = build_windows(segments, cfg)
+    # low-speech content (gameplay, sports, montages) can't be anchored to
+    # dialogue -- add transcript-independent sliding windows as well
+    if profile == "action" or len(windows) < cfg.num_clips * 3:
+        windows += build_time_windows(segments, duration, cfg)
     log.info("built %d candidate windows", len(windows))
-    if not windows:  # very short source: take everything
-        windows = [{"start": segments[0]["start"], "end": segments[-1]["end"],
-                    "seg_range": (0, len(segments) - 1)}]
+    if not windows:
+        raise RuntimeError("video too short to build any candidate window")
 
-    scored = score_windows(windows, segments, cuts, times, rms, cfg)
+    scored = score_windows(windows, cuts, times, rms, cfg, profile)
     if cfg.use_llm_highlights:
-        scored = llm_rerank(cfg, segments, scored)
+        scored = llm_rerank(cfg, segments, scored, duration, profile)
 
     picked = pick_non_overlapping(scored, cfg.num_clips)
     for w in picked:
