@@ -1,0 +1,22 @@
+# Core (all free / open-source)
+yt-dlp>=2024.4.9          # Stage 1: download from URLs
+imageio-ffmpeg>=0.4.9     # bundled ffmpeg binary (used if ffmpeg not on PATH)
+faster-whisper>=1.0.0     # Stage 2: local transcription with word timestamps
+scenedetect[opencv]>=0.6.3  # Stage 3: shot-boundary detection (pulls opencv)
+librosa>=0.10.0           # Stage 3: audio energy features
+numpy>=1.24
+requests>=2.31            # LLM HTTP calls (Ollama / free-tier APIs)
+edge-tts>=6.1.9           # Stage 5: free Microsoft neural voices, no API key
+
+# Web UI
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9   # file uploads
+
+# Optional (graceful fallback if missing)
+mediapipe>=0.10.9         # Stage 6: face-aware cropping (falls back to center crop)
+
+# Optional offline TTS fallback (install manually if wanted):
+#   piper-tts             # Stage 5 fallback: fully local TTS
+# Optional watermark/caption removal (Stage 7, heavy):
+#   iopaint               # runs LaMa locally: `pip install iopaint`

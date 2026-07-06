@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shortsmaker"
+version = "0.1.0"
+description = "Free/open-source pipeline: video in, vertical short clips with AI voiceover and kinetic captions out"
+requires-python = ">=3.10"
+dependencies = [
+    "yt-dlp>=2024.4.9",
+    "imageio-ffmpeg>=0.4.9",
+    "faster-whisper>=1.0.0",
+    "scenedetect[opencv]>=0.6.3",
+    "librosa>=0.10.0",
+    "numpy>=1.24",
+    "requests>=2.31",
+    "edge-tts>=6.1.9",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+facecrop = ["mediapipe>=0.10.9"]
+
+[tool.setuptools.package-data]
+shortsmaker = ["static/*.html"]
+
+[project.scripts]
+shortsmaker = "shortsmaker.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["shortsmaker*"]

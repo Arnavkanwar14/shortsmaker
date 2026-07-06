@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shortsmaker</title>
+<style>
+  :root {
+    --bg: #0e0f13; --panel: #181a21; --panel2: #1f222c; --text: #e8eaf0;
+    --muted: #9aa0ae; --accent: #00d4ff; --accent2: #ffd400; --err: #ff5470;
+    --ok: #3ddc84; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 26px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid #262a35;
+          border-radius: var(--radius); padding: 20px; }
+  label { display: block; font-size: 12px; color: var(--muted);
+          margin: 14px 0 5px; text-transform: uppercase; letter-spacing: .5px; }
+  input[type=text], select, input[type=number] {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2c3140;
+    background: var(--panel2); color: var(--text); font-size: 14px; }
+  .drop { border: 2px dashed #333a4b; border-radius: 10px; padding: 22px;
+          text-align: center; color: var(--muted); cursor: pointer;
+          transition: border-color .15s; font-size: 14px; }
+  .drop.hover, .drop:hover { border-color: var(--accent); }
+  .drop.hasfile { border-color: var(--ok); color: var(--ok); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button.go { width: 100%; margin-top: 20px; padding: 13px; font-size: 15px;
+    font-weight: 700; border: 0; border-radius: 10px; cursor: pointer;
+    background: linear-gradient(90deg, var(--accent), #7a5cff); color: #08090c; }
+  button.go:disabled { opacity: .45; cursor: not-allowed; }
+  .status { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .badge { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 99px; }
+  .badge.idle    { background: #2c3140; color: var(--muted); }
+  .badge.running { background: #103a4d; color: var(--accent); }
+  .badge.done    { background: #123726; color: var(--ok); }
+  .badge.failed  { background: #401622; color: var(--err); }
+  #log { background: #0a0b0e; border: 1px solid #262a35; border-radius: 10px;
+         padding: 12px; height: 260px; overflow-y: auto; font: 12px/1.55 Consolas,
+         monospace; color: #b6bcc9; white-space: pre-wrap; }
+  .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr));
+           gap: 16px; margin-top: 18px; }
+  .clip { background: var(--panel2); border-radius: 12px; overflow: hidden;
+          border: 1px solid #2c3140; }
+  .clip video { width: 100%; aspect-ratio: 9/16; background: #000; display: block; }
+  .clip .meta { padding: 10px 12px; font-size: 12px; color: var(--muted); }
+  .clip .meta b { color: var(--text); }
+  .clip a.dl { display: block; text-align: center; padding: 8px; font-size: 13px;
+    font-weight: 600; color: var(--accent); text-decoration: none;
+    border-top: 1px solid #2c3140; }
+  .clip .reason { font-size: 11px; margin-top: 4px; color: #7c8496; }
+  .cost { margin-top: 14px; font-size: 13px; color: var(--accent2); }
+  .spinner { width: 14px; height: 14px; border: 2px solid #2c3140;
+    border-top-color: var(--accent); border-radius: 50%; display: inline-block;
+    animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>shorts<span>maker</span></h1>
+  <p class="sub">video in &rarr; vertical clips with AI voiceover + kinetic captions out. 100% free stack.</p>
+
+  <div class="grid">
+    <div class="card">
+      <label>Video URL (YouTube etc.)</label>
+      <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+      <label>&mdash; or upload a file &mdash;</label>
+      <div class="drop" id="drop">click or drop a video here</div>
+      <input type="file" id="file" accept="video/*" style="display:none">
+
+      <div class="row">
+        <div><label>Clips</label>
+          <input type="number" id="num_clips" min="1" max="10" value="3"></div>
+        <div><label>Target length (s)</label>
+          <input type="number" id="duration" min="20" max="90" value="45"></div>
+      </div>
+      <label>Voice</label>
+      <select id="voice"></select>
+      <div class="row">
+        <div><label>Captions</label>
+          <select id="style">
+            <option value="kinetic">kinetic</option>
+            <option value="plain">plain</option>
+            <option value="none">none</option>
+          </select></div>
+        <div><label>Whisper model</label>
+          <select id="whisper_model">
+            <option value="tiny">tiny (fastest)</option>
+            <option value="base">base</option>
+            <option value="small" selected>small (recommended)</option>
+            <option value="medium">medium</option>
+          </select></div>
+      </div>
+      <label>Script LLM</label>
+      <select id="llm_provider">
+        <option value="auto" selected>auto (ollama &rarr; groq &rarr; gemini)</option>
+        <option value="ollama">ollama (local)</option>
+        <option value="groq">groq (free API key)</option>
+        <option value="gemini">gemini (free API key)</option>
+        <option value="none">none (template script)</option>
+      </select>
+      <button class="go" id="go">Make shorts</button>
+    </div>
+
+    <div class="card">
+      <div class="status">
+        <span class="badge idle" id="badge">idle</span>
+        <span id="statusText" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <div id="log">waiting for a job...</div>
+      <div class="cost" id="cost"></div>
+      <div class="clips" id="clips"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let pickedFile = null, pollTimer = null;
+
+fetch('/api/voices').then(r => r.json()).then(vs => {
+  $('voice').innerHTML = vs.map(v => `<option>${v}</option>`).join('');
+});
+
+$('drop').onclick = () => $('file').click();
+$('file').onchange = () => setFile($('file').files[0]);
+['dragover','dragleave','drop'].forEach(ev => $('drop').addEventListener(ev, e => {
+  e.preventDefault();
+  $('drop').classList.toggle('hover', ev === 'dragover');
+  if (ev === 'drop' && e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+}));
+function setFile(f) {
+  pickedFile = f || null;
+  $('drop').textContent = f ? f.name : 'click or drop a video here';
+  $('drop').classList.toggle('hasfile', !!f);
+}
+
+$('go').onclick = async () => {
+  const fd = new FormData();
+  fd.append('url', $('url').value.trim());
+  if (pickedFile) fd.append('file', pickedFile);
+  for (const k of ['num_clips','duration','voice','style','llm_provider','whisper_model'])
+    fd.append(k, $(k).value);
+  if (!$('url').value.trim() && !pickedFile) { alert('Give a URL or a file'); return; }
+
+  $('go').disabled = true;
+  $('clips').innerHTML = ''; $('cost').textContent = '';
+  setBadge('running', pickedFile ? 'uploading...' : 'starting...');
+  try {
+    const r = await fetch('/api/jobs', { method: 'POST', body: fd });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const { job_id } = await r.json();
+    poll(job_id);
+  } catch (e) {
+    setBadge('failed', e.message); $('go').disabled = false;
+  }
+};
+
+function setBadge(state, text) {
+  $('badge').className = 'badge ' + state;
+  $('badge').textContent = state;
+  $('statusText').innerHTML = state === 'running'
+    ? `<span class="spinner"></span> ${text || ''}` : (text || '');
+}
+
+function poll(id) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const r = await fetch('/api/jobs/' + id);
+    if (!r.ok) return;
+    const j = await r.json();
+    $('log').textContent = j.log.join('\n') || '...';
+    $('log').scrollTop = $('log').scrollHeight;
+    if (j.status === 'running' || j.status === 'queued') {
+      setBadge('running', 'pipeline running -- transcription is the slow part');
+      return;
+    }
+    clearInterval(pollTimer); $('go').disabled = false;
+    setBadge(j.status, j.status === 'failed' ? (j.error || 'see log') : 'finished');
+    if (j.clips) render(j);
+  }, 2000);
+}
+
+function render(j) {
+  $('clips').innerHTML = j.clips.map(c => c.status === 'ok' ? `
+    <div class="clip">
+      <video src="${c.url}" controls preload="metadata"></video>
+      <div class="meta"><b>${c.clip}</b> &middot; ${c.duration}s &middot; score ${c.score}
+        <div class="reason">${c.reason}</div></div>
+      <a class="dl" href="${c.url}" download>download</a>
+    </div>` : `
+    <div class="clip"><div class="meta"><b>${c.clip}</b> failed
+      <div class="reason">${c.error || ''}</div></div></div>`).join('');
+  if (j.cost) $('cost').textContent =
+    `a credit-based SaaS would have charged ~${j.cost.total_credits_equivalent} credits for this run - you paid $0`;
+}
+</script>
+</body>
+</html>
