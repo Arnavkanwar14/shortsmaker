@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--content-type", dest="content_type",
                    choices=["auto", "talk", "action", "funny"],
                    help="tunes highlight scoring; 'action' for gaming/sports")
+    r.add_argument("--trim-silence", dest="trim_silence",
+                   choices=["auto", "on", "off"],
+                   help="jump-cut dead air and um/uh fillers (default auto)")
     r.add_argument("--style", choices=["kinetic", "plain", "none"])
     r.add_argument("--clean", type=lambda s: s.lower() in ("1", "true", "yes"),
                    help="true/false: inpaint burned-in captions/watermarks (slow)")

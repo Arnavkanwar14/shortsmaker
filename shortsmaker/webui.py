@@ -81,6 +81,7 @@ async def create_job(
     vo_volume: float = Form(1.0),
     bg_volume: float = Form(-1.0),
     content_type: str = Form("auto"),
+    trim_silence: str = Form("auto"),
 ):
     if not url and (file is None or not file.filename):
         raise HTTPException(400, "provide a URL or upload a file")
@@ -102,7 +103,7 @@ async def create_job(
                  whisper_model=whisper_model,
                  voiceover=voiceover.lower() in ("1", "true", "yes"),
                  vo_volume=vo_volume, bg_audio_volume=bg_volume,
-                 content_type=content_type)
+                 content_type=content_type, trim_silence=trim_silence)
     cfg.min_duration = max(duration - 15, 15)
     cfg.max_duration = duration + 15
     cfg.run_id = derive_run_id(cfg.input)

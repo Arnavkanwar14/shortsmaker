@@ -79,7 +79,8 @@ def run(cfg: Config, script: str, clip: dict, clip_dir: Path) -> tuple[Path, lis
         log.info("tts: voiceover exists, skipping")
         return audio, read_json(words_file)
 
-    clip_len = clip["end"] - clip["start"]
+    # compare against the post-cut length when dead air was trimmed
+    clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
 
     if cfg.tts_engine == "piper":
         words = synth_piper(cfg, script, audio)

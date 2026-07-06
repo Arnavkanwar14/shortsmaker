@@ -238,64 +238,83 @@ CONTENT_HINTS = {
 }
 
 
-def llm_rerank(cfg: Config, segments: list[dict], candidates: list[dict],
-               duration: float, profile: str) -> list[dict]:
+def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
+                 duration: float, profile: str) -> list[dict]:
+    """Grade the top candidates on an Opus-style rubric -- Hook / Flow /
+    Value, 0-99 -- in ONE LLM call per run (free-tier friendly). The model
+    may also suggest up to 2 windows the heuristics missed."""
+    ranked = sorted(candidates, key=lambda c: c["score"], reverse=True)
+    top = ranked[:12]                            # cap prompt size and tokens
+    rest = ranked[12:]
+
     lines = [f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segments]
     transcript_block = "\n".join(lines) or "(almost no speech in this video)"
-    if len(transcript_block) > 24000:            # keep local models happy
-        transcript_block = transcript_block[:24000]
+    if len(transcript_block) > 9000:             # stay cheap on free tiers
+        transcript_block = transcript_block[:9000] + "\n[...transcript trimmed...]"
+    listing = "\n".join(
+        f'{i}: [{c["start"]:.0f}s-{c["end"]:.0f}s] "{(c["text"] or "(no speech)")[:280]}"'
+        for i, c in enumerate(top))
+
     prompt = (
-        f"Here is a timestamped transcript of a {duration:.0f}-second video.\n\n"
+        f"A {duration:.0f}-second video. Transcript (timestamped):\n"
         f"{transcript_block}\n\n"
-        f"Identify the {cfg.num_clips} best {cfg.min_duration}-{cfg.max_duration} "
-        f"second segments to post as standalone viral short clips. "
-        f"Prioritize: {CONTENT_HINTS[profile]}. Respond with ONLY a JSON array "
-        'like: [{"start": 12.5, "end": 55.0, "reason": "one line"}]'
+        f"Candidate clips to grade:\n{listing}\n\n"
+        f"Grade EACH candidate as a standalone viral short ({CONTENT_HINTS[profile]}). "
+        "Score 0-99 on: hook (do the first seconds grab attention?), "
+        "flow (complete thought, no mid-idea chop?), value (takeaway, emotion, "
+        "or aha-moment?), and overall viral score. "
+        "You may also add up to 2 NEW windows the list missed, using "
+        f'{cfg.min_duration}-{cfg.max_duration}s spans. Respond with ONLY a JSON array: '
+        '[{"id": 0, "hook": 70, "flow": 80, "value": 60, "viral": 71, '
+        '"reason": "one line"}, {"id": "new", "start": 120.0, "end": 165.0, '
+        '"viral": 75, "reason": "one line"}]'
     )
-    reply = llm.complete(cfg, prompt, system="You find viral moments in videos.")
-    picks = llm.extract_json_array(reply)
-    if not picks:
-        log.info("LLM highlight pass unavailable/unparseable; using heuristics only")
+    reply = llm.complete(cfg, prompt, max_tokens=1500,
+                         system="You are a short-form video editor who predicts "
+                                "which clips go viral. You are strict: most "
+                                "clips score under 60.")
+    grades = llm.extract_json_array(reply)
+    if not grades:
+        log.info("LLM virality pass unavailable/unparseable; using heuristics only")
         return candidates
 
-    boosted, matched_picks = [], set()
-    for c in candidates:
-        c = dict(c)
-        for pi, p in enumerate(picks):
-            try:
-                ps, pe = float(p["start"]), float(p["end"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            overlap = min(c["end"], pe) - max(c["start"], ps)
-            if overlap > 0.3 * (c["end"] - c["start"]):
-                c["score"] = round(c["score"] + 0.5, 4)
-                c["reason"] = f"LLM: {p.get('reason', 'selected by LLM')}"
-                matched_picks.add(pi)
-                break
-        boosted.append(c)
-
-    # LLM picks that matched no heuristic candidate become candidates
-    # themselves -- the model may see gold where the heuristics saw noise
-    for pi, p in enumerate(picks):
-        if pi in matched_picks:
-            continue
+    graded = [dict(c) for c in top]
+    added = 0
+    for g in grades:
         try:
-            ps, pe = float(p["start"]), float(p["end"])
-        except (KeyError, TypeError, ValueError):
+            if g.get("id") == "new":
+                ps, pe = float(g["start"]), float(g["end"])
+                ps = max(0.0, min(ps, duration - cfg.min_duration))
+                pe = min(max(pe, ps + cfg.min_duration),
+                         min(ps + cfg.max_duration, duration))
+                if pe - ps < cfg.min_duration * 0.8 or added >= 2:
+                    continue
+                text, _, _ = _window_texts(segments, ps, pe)
+                viral = int(g.get("viral", 60))
+                graded.append({
+                    "start": round(ps, 2), "end": round(pe, 2),
+                    "score": round(0.9 * viral / 99, 4), "signals": {},
+                    "text": text, "reason": f"LLM found: {g.get('reason', '')}",
+                    "virality": {"viral": viral, "reason": g.get("reason", "")},
+                })
+                added += 1
+                continue
+            c = graded[int(g["id"])]
+        except (KeyError, TypeError, ValueError, IndexError):
             continue
-        ps = max(0.0, min(ps, duration - cfg.min_duration))
-        pe = min(max(pe, ps + cfg.min_duration), min(ps + cfg.max_duration, duration))
-        if pe - ps < cfg.min_duration * 0.8:
-            continue
-        text, first, last = _window_texts(segments, ps, pe)
-        boosted.append({
-            "start": round(ps, 2), "end": round(pe, 2), "score": 0.65,
-            "signals": {}, "text": text,
-            "reason": f"LLM: {p.get('reason', 'selected by LLM')}",
-        })
-    log.info("LLM highlight pass: %d candidates boosted, %d new windows added",
-             len(matched_picks), len(picks) - len(matched_picks))
-    return boosted
+        viral = int(g.get("viral", 0))
+        c["virality"] = {
+            "hook": int(g.get("hook", 0)), "flow": int(g.get("flow", 0)),
+            "value": int(g.get("value", 0)), "viral": viral,
+            "reason": g.get("reason", ""),
+        }
+        # blend: heuristics know the audio/editing, the LLM knows the content
+        c["score"] = round(0.5 * c["score"] + 0.5 * viral / 99, 4)
+        c["reason"] = f"viral {viral}: {g.get('reason', '')}"
+    n_graded = sum(1 for c in graded if "virality" in c)
+    log.info("LLM virality pass: %d candidates graded, %d new windows (1 API call)",
+             n_graded, added)
+    return graded + rest
 
 
 # ---------------------------------------------------------------- main
@@ -330,7 +349,7 @@ def run(cfg: Config, video: Path, transcript: dict) -> list[dict]:
 
     scored = score_windows(windows, cuts, times, rms, cfg, profile)
     if cfg.use_llm_highlights:
-        scored = llm_rerank(cfg, segments, scored, duration, profile)
+        scored = llm_virality(cfg, segments, scored, duration, profile)
 
     picked = pick_non_overlapping(scored, cfg.num_clips)
     for w in picked:

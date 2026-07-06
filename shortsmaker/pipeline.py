@@ -10,6 +10,7 @@ import re
 import traceback
 from pathlib import Path
 
+from . import edits
 from .config import Config
 from .stages import assemble, cleanup, highlights, ingest, script_gen, transcribe, tts
 from .util import CostLedger, media_duration, read_json, write_json
@@ -72,9 +73,21 @@ def run(cfg: Config) -> dict:
             "duration": round(clip["end"] - clip["start"], 1),
             "score": clip["score"], "reason": clip["reason"],
             "signals": clip.get("signals", {}),
+            "virality": clip.get("virality"),
             "status": "ok",
         }
         try:
+            # snappy-cut plan: trim dead air + filler words (from the source
+            # speech word timestamps); shortens the effective clip length
+            words_rel = source_caption_words(transcript, clip)
+            keeps = None
+            if cfg.trim_silence != "off":
+                keeps = edits.plan_cuts(words_rel, clip["end"] - clip["start"],
+                                        max_gap=cfg.silence_gap)
+            if keeps:
+                clip = dict(clip, edited_duration=edits.edited_duration(keeps))
+                entry["edited_duration"] = clip["edited_duration"]
+
             if cfg.voiceover:
                 context = script_gen.clip_context(transcript, clip, meta)
                 script = script_gen.run(cfg, clip, clip_dir, context)
@@ -85,11 +98,13 @@ def run(cfg: Config) -> dict:
                 ledger.add("tts", 1)
             else:
                 # no voiceover: caption the original speech instead,
-                # using the source transcript's word timestamps
+                # remapped onto the compressed timeline if cuts were made
                 vo_audio = None
-                caption_words = source_caption_words(transcript, clip)
+                caption_words = (edits.remap_words(words_rel, keeps)
+                                 if keeps else words_rel)
 
-            final = assemble.run(cfg, video, clip, clip_dir, vo_audio, caption_words)
+            final = assemble.run(cfg, video, clip, clip_dir, vo_audio,
+                                 caption_words, keeps)
             ledger.add("assemble", 1)
             entry["file"] = str(final.relative_to(run_dir))
         except Exception as e:

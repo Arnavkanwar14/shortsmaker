@@ -104,7 +104,8 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None) -> str:
         log.info("script: %s exists, skipping", out)
         return out.read_text(encoding="utf-8")
 
-    duration = clip["end"] - clip["start"]
+    # budget against the post-cut length when dead air was trimmed
+    duration = clip.get("edited_duration") or (clip["end"] - clip["start"])
     max_words = int(duration * cfg.words_per_second)
     reply = llm.complete(cfg, _prompt(cfg, clip, duration, context or {}),
                          system=SYSTEM, max_tokens=max_words * 3)

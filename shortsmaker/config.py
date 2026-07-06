@@ -57,6 +57,12 @@ class Config:
                                     # generation and sound far less robotic
     piper_model: str = ""           # path to a .onnx piper voice, if using piper
 
+    # ---- editing ----
+    trim_silence: str = "auto"      # auto | on | off -- cut dead air and
+                                    # filler words (um/uh) for snappy pacing.
+                                    # auto = on for speech-driven clips.
+    silence_gap: float = 0.4        # silences longer than this get cut (s)
+
     # ---- assemble ----
     style: str = "kinetic"          # kinetic | plain | none (captions style)
     out_width: int = 1080

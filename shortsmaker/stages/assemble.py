@@ -130,9 +130,12 @@ def crop_filter(cfg: Config, video: Path, clip: dict) -> str:
 
 # ----------------------------------------------------------------- main
 def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
-        vo_audio: Path | None, caption_words: list[dict]) -> Path:
+        vo_audio: Path | None, caption_words: list[dict],
+        keeps: list[tuple[float, float]] | None = None) -> Path:
     """vo_audio None = no voiceover: original audio stays primary and
-    caption_words are the source speech instead of TTS words."""
+    caption_words are the source speech instead of TTS words.
+    keeps = snappy-cut intervals (relative to clip start) to jump-cut
+    dead air/fillers out of the video and original audio."""
     final = clip_dir / "final.mp4"
     if final.exists() and not cfg.force:
         log.info("assemble: final.mp4 exists, skipping")
@@ -156,18 +159,28 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
     bg_vol = cfg.bg_audio_volume if cfg.bg_audio_volume >= 0 else (
         0.18 if vo_audio is not None else 1.0)
 
+    # jump-cut filters: drop non-keep frames/samples, then regenerate
+    # timestamps so the output timeline is continuous
+    if keeps:
+        from ..edits import select_expr
+        expr = select_expr(keeps)
+        vcut = f"select='{expr}',setpts=N/FRAME_RATE/TB,"
+        acut = f"aselect='{expr}',asetpts=N/SR/TB,"
+    else:
+        vcut = acut = ""
+
     def build_args(caption: str) -> list[str]:
         args = ["-ss", str(clip["start"]), "-to", str(clip["end"]),
                 "-i", str(video)]
         if vo_audio is not None:
             args += ["-i", str(vo_audio)]
-            afilter = (f"[0:a]volume={bg_vol}[bg];"
+            afilter = (f"[0:a]{acut}volume={bg_vol}[bg];"
                        f"[1:a]volume={cfg.vo_volume},apad[vo];"
                        f"[bg][vo]amix=inputs=2:duration=first:normalize=0[a]")
         else:
-            afilter = f"[0:a]volume={bg_vol}[a]"
+            afilter = f"[0:a]{acut}volume={bg_vol}[a]"
         args += [
-            "-filter_complex", f"[0:v]{vf}{caption}[v];{afilter}",
+            "-filter_complex", f"[0:v]{vcut}{vf}{caption}[v];{afilter}",
             "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k", "-shortest",

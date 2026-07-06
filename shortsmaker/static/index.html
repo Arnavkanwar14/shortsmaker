@@ -142,6 +142,12 @@
           <div><label>Original audio %</label>
             <input type="number" id="bg_volume" min="0" max="200" value="18"></div>
         </div>
+        <label>Snappy cut (dead air + um/uh removal)</label>
+        <select id="trim_silence">
+          <option value="auto" selected>auto &mdash; on for speech-driven clips</option>
+          <option value="on">on</option>
+          <option value="off">off</option>
+        </select>
         <div class="hint">With voiceover on, the original audio is ducked
           (default 18%) so the narration stays listenable &mdash; raise it if the
           source sound matters, e.g. 40-60% for gameplay.</div>
@@ -239,7 +245,7 @@ $('go').onclick = async () => {
   fd.append('url', $('url').value.trim());
   if (pickedFile) fd.append('file', pickedFile);
   for (const k of ['num_clips','duration','voice','style','llm_provider',
-                   'whisper_model','voiceover','content_type'])
+                   'whisper_model','voiceover','content_type','trim_silence'])
     fd.append(k, $(k).value);
   fd.append('vo_volume', $('vo_volume').value / 100);
   fd.append('bg_volume', $('bg_volume').value / 100);
@@ -298,10 +304,17 @@ function clipCard(c) {
     <div class="clip"><div class="meta"><b>${c.clip}</b> failed
       <div class="reason">${esc(c.error)}</div></div></div>`;
   const sid = 'sc_' + Math.random().toString(36).slice(2, 9);
+  const v = c.virality;
+  const scoreLine = v
+    ? `viral <b style="color:var(--accent2)">${v.viral}</b>` +
+      (v.hook != null ? ` &middot; hook ${v.hook} flow ${v.flow} value ${v.value}` : '')
+    : `score ${c.score}`;
+  const dur = c.edited_duration
+    ? `${c.edited_duration}s <s style="opacity:.5">${c.duration}s</s>` : `${c.duration}s`;
   return `
     <div class="clip">
       <video src="${c.url}" controls preload="metadata"></video>
-      <div class="meta"><b>${c.clip}</b> &middot; ${c.duration}s &middot; score ${c.score}
+      <div class="meta"><b>${c.clip}</b> &middot; ${dur} &middot; ${scoreLine}
         <div class="reason">${esc(c.reason)}</div></div>
       <div class="actions">
         <a href="${c.url}" download>download</a>
