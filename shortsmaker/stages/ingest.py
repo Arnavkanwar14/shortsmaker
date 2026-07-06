@@ -16,13 +16,17 @@ def is_url(s: str) -> bool:
     return urlparse(s).scheme in ("http", "https")
 
 
-def download(url: str, dest_dir: Path) -> Path:
+def download(url: str, dest_dir: Path, max_height: int = 1080) -> Path:
     import yt_dlp
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     out_tmpl = str(dest_dir / "source.%(ext)s")
+    # cap at max_height: we normalize down to it anyway, so 4K sources just
+    # waste bandwidth and make the re-encode dramatically slower
+    fmt = (f"bestvideo[height<={max_height}][ext=mp4]+bestaudio[ext=m4a]/"
+           f"best[height<={max_height}][ext=mp4]/best[height<={max_height}]/best")
     opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": fmt,
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
@@ -51,7 +55,7 @@ def run(cfg: Config) -> Path:
         return normalized
 
     if is_url(cfg.input):
-        source = download(cfg.input, run_dir)
+        source = download(cfg.input, run_dir, cfg.max_height)
     else:
         src = Path(cfg.input)
         if not src.exists():
