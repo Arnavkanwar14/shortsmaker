@@ -38,6 +38,7 @@ def _cached_model(url: str, filename: str) -> Path:
 
 
 def _iter_sample_frames(video: Path, start: float, end: float):
+    """Yields (t_relative_to_clip, frame) about once per second."""
     import cv2
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
@@ -47,12 +48,12 @@ def _iter_sample_frames(video: Path, start: float, end: float):
         ok, frame = cap.read()
         if not ok:
             break
-        yield frame
+        yield round(t - start, 2), frame
         t += 1.0                               # sample 1 frame per second
     cap.release()
 
 
-def _centers_mediapipe(video: Path, start: float, end: float) -> list[float]:
+def _centers_mediapipe(video: Path, start: float, end: float):
     """mediapipe >= 0.10 Tasks API (legacy mp.solutions was removed)."""
     import cv2
     import mediapipe as mp
@@ -63,18 +64,21 @@ def _centers_mediapipe(video: Path, start: float, end: float) -> list[float]:
             base_options=BaseOptions(model_asset_path=str(
                 _cached_model(BLAZEFACE_URL, "blaze_face_short_range.tflite"))),
             min_detection_confidence=0.5))
-    centers = []
-    for frame in _iter_sample_frames(video, start, end):
+    samples = []
+    for t, frame in _iter_sample_frames(video, start, end):
         img = mp.Image(image_format=mp.ImageFormat.SRGB,
                        data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         res = detector.detect(img)
         if res.detections:
-            box = res.detections[0].bounding_box
-            centers.append((box.origin_x + box.width / 2) / frame.shape[1])
-    return centers
+            # largest face = the shot's subject (active-speaker detection
+            # would need audio-visual sync; prominence is a good proxy)
+            box = max((d.bounding_box for d in res.detections),
+                      key=lambda b: b.width * b.height)
+            samples.append((t, (box.origin_x + box.width / 2) / frame.shape[1]))
+    return samples
 
 
-def _centers_haar(video: Path, start: float, end: float) -> list[float]:
+def _centers_haar(video: Path, start: float, end: float):
     """OpenCV Haar cascade fallback (opencv 5 no longer bundles the XMLs)."""
     import cv2
     xml = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
@@ -83,31 +87,81 @@ def _centers_haar(video: Path, start: float, end: float) -> list[float]:
     cascade = cv2.CascadeClassifier(str(xml))
     if cascade.empty():
         raise RuntimeError("could not load haar cascade")
-    centers = []
-    for frame in _iter_sample_frames(video, start, end):
+    samples = []
+    for t, frame in _iter_sample_frames(video, start, end):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
         if len(faces):
             x, _, fw, _ = max(faces, key=lambda f: f[2] * f[3])
-            centers.append((x + fw / 2) / frame.shape[1])
-    return centers
+            samples.append((t, (x + fw / 2) / frame.shape[1]))
+    return samples
 
 
-def face_center_x(video: Path, start: float, end: float) -> float | None:
-    """Median normalized (0..1) face-center x inside the window, or None."""
+def face_samples(video: Path, start: float, end: float) -> list[tuple[float, float]]:
+    """[(t_rel, normalized center x)] about 1/s, best available detector."""
     for name, fn in (("mediapipe", _centers_mediapipe), ("opencv-haar", _centers_haar)):
         try:
-            centers = fn(video, start, end)
+            samples = fn(video, start, end)
         except Exception as e:
             log.info("face detection via %s unavailable (%s)", name, str(e)[:120])
             continue
-        if centers:
-            centers.sort()
-            return centers[len(centers) // 2]
-    return None
+        if samples:
+            return samples
+    return []
 
 
-def crop_filter(cfg: Config, video: Path, clip: dict) -> str:
+def build_crop_path(samples: list[tuple[float, float]], threshold: float = 0.08,
+                    glide: float = 0.4, confirm: int = 2) -> list[tuple[float, float]]:
+    """Hold-then-glide keyframes [(t, cx)] from noisy per-second samples.
+
+    The frame holds still until the subject has clearly moved (> threshold,
+    seen on `confirm` consecutive samples -- stops wobble in two-person
+    shots), then glides to the new position over `glide` seconds.
+    """
+    if not samples:
+        return []
+    cur = samples[0][1]
+    kfs = [(0.0, cur)]
+    pending: list[tuple[float, float]] = []
+    for t, cx in samples[1:]:
+        if abs(cx - cur) <= threshold:
+            pending = []
+            continue
+        pending.append((t, cx))
+        if len(pending) >= confirm:
+            move_t = pending[0][0]
+            target = sum(c for _, c in pending) / len(pending)
+            glide_start = max(move_t - glide, kfs[-1][0] + 0.05)
+            if glide_start < move_t:
+                kfs.append((round(glide_start, 2), cur))
+            kfs.append((round(move_t, 2), round(target, 4)))
+            cur = target
+            pending = []
+    return kfs
+
+
+def _crop_x_expr(kfs: list[tuple[float, float]], crop_w: int, w: int) -> str:
+    """Piecewise-linear ffmpeg expression for crop x over time.
+    Segments use gte*lt (not between) so boundaries never double-count,
+    and the result is snapped to even pixels for yuv420."""
+    def px(cx: float) -> int:
+        return max(0, min(int(cx * w - crop_w / 2), w - crop_w))
+
+    pts = [(t, px(cx)) for t, cx in kfs]
+    if len(pts) == 1:
+        return str(pts[0][1])
+    terms = [f"lt(t,{pts[0][0]})*{pts[0][1]}"]
+    for (t0, x0), (t1, x1) in zip(pts, pts[1:]):
+        if t1 <= t0:
+            continue
+        terms.append(f"gte(t,{t0})*lt(t,{t1})*"
+                     f"({x0}+({x1}-{x0})*(t-{t0})/({t1}-{t0}))")
+    terms.append(f"gte(t,{pts[-1][0]})*{pts[-1][1]}")
+    return f"trunc(({'+'.join(terms)})/2)*2"
+
+
+def crop_filter(cfg: Config, video: Path, clip: dict,
+                keeps: list[tuple[float, float]] | None = None) -> str:
     info = ffprobe_video(video)
     w, h = info["width"], info["height"]
     target_ar = cfg.out_width / cfg.out_height          # 9/16
@@ -117,14 +171,30 @@ def crop_filter(cfg: Config, video: Path, clip: dict) -> str:
                 f"pad={cfg.out_width}:{cfg.out_height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
 
     crop_w = int(h * target_ar) // 2 * 2                # even width
-    cx = 0.5
+    kfs: list[tuple[float, float]] = []
     if cfg.face_crop:
-        found = face_center_x(video, clip["start"], clip["end"])
-        if found is not None:
-            cx = found
-            log.info("face-aware crop: center x = %.2f", cx)
-    x = max(0, min(int(cx * w - crop_w / 2), w - crop_w))
-    return (f"crop={crop_w}:{h}:{x}:0,"
+        samples = face_samples(video, clip["start"], clip["end"])
+        kfs = build_crop_path(samples)
+        if keeps and kfs:
+            # crop time runs on the post-jump-cut timeline
+            from ..edits import remap_time
+            remapped = []
+            for t, cx in kfs:
+                rt = remap_time(t, keeps)
+                if not remapped or rt > remapped[-1][0]:
+                    remapped.append((rt, cx))
+            kfs = remapped
+
+    if len(kfs) >= 2:
+        x_part = f"x='{_crop_x_expr(kfs, crop_w, w)}':y=0"
+        log.info("dynamic speaker crop: %d keyframes", len(kfs))
+    else:
+        cx = kfs[0][1] if kfs else 0.5
+        if kfs:
+            log.info("face-aware crop (static): center x = %.2f", cx)
+        x = max(0, min(int(cx * w - crop_w / 2), w - crop_w))
+        x_part = f"x={x}:y=0"
+    return (f"crop=w={crop_w}:h={h}:{x_part},"
             f"scale={cfg.out_width}:{cfg.out_height},setsar=1")
 
 
@@ -148,7 +218,7 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
     ass_file = clip_dir / "captions.ass"
     write_ass(caption_words, ass_file, style=cfg.style)
 
-    vf = crop_filter(cfg, video, clip)
+    vf = crop_filter(cfg, video, clip, keeps)
     with_captions = cfg.style != "none" and caption_words
     # ffmpeg is run with cwd=clip_dir so the ass filter gets a plain relative
     # filename -- avoids Windows drive-colon escaping issues in filtergraphs.

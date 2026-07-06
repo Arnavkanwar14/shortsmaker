@@ -71,3 +71,16 @@ def remap_words(words: list[dict], keeps: list[tuple[float, float]]) -> list[dic
 def select_expr(keeps: list[tuple[float, float]]) -> str:
     """ffmpeg select/aselect expression for the keep intervals."""
     return "+".join(f"between(t,{s},{e})" for s, e in keeps)
+
+
+def remap_time(t: float, keeps: list[tuple[float, float]]) -> float:
+    """Map a source-timeline instant onto the compressed timeline.
+    Instants inside removed regions collapse to the following cut point."""
+    offset = 0.0
+    for s, e in keeps:
+        if t < s:
+            return round(offset, 3)
+        if t <= e:
+            return round(offset + (t - s), 3)
+        offset += e - s
+    return round(offset, 3)
