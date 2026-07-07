@@ -362,7 +362,15 @@ def run(cfg: Config, video: Path, transcript: dict) -> list[dict]:
 
     segments = [s for s in transcript["segments"] if s["text"].strip()]
 
-    cuts = detect_scenes(video, cfg.scene_threshold)
+    # scene detection is ~10s/min of video -- cache it per run so setting
+    # tweaks and re-runs don't pay it again
+    scenes_file = cfg.run_dir / "scenes.json"
+    if scenes_file.exists() and not cfg.force:
+        cuts = read_json(scenes_file)
+        log.info("scene detection: %d shots (cached)", len(cuts))
+    else:
+        cuts = detect_scenes(video, cfg.scene_threshold)
+        write_json(scenes_file, cuts)
     wav = cfg.run_dir / "audio_16k.wav"
     times, rms = audio_energy(wav)
     duration = float(times[-1]) if len(times) else 0.0

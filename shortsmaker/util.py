@@ -89,6 +89,9 @@ def ffprobe_video(path: Path) -> dict:
     m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", res.stderr)
     if m:
         info["width"], info["height"] = int(m.group(1)), int(m.group(2))
+    m = re.search(r"Video:\s*(\w+)", res.stderr)
+    if m:
+        info["codec"] = m.group(1)
     m = re.search(r"(\d+\.?\d*)\s*fps", res.stderr)
     if m:
         info["fps"] = float(m.group(1))

@@ -73,8 +73,20 @@ def run(cfg: Config) -> Path:
                     "uploader": "", "description": ""})
 
     info = ffprobe_video(source)
-    log.info("source: %dx%d, %.1fs, %.1f fps", info["width"], info["height"],
-             info["duration"], info["fps"])
+    log.info("source: %dx%d %s, %.1fs, %.1f fps", info["width"], info["height"],
+             info.get("codec", "?"), info["duration"], info["fps"])
+
+    # already-compliant sources (the common case now that downloads are
+    # capped at 1080p h264) just get remuxed -- seconds instead of minutes
+    compliant = (info.get("codec") == "h264"
+                 and info["height"] <= cfg.max_height
+                 and info["fps"] <= 61
+                 and source.suffix.lower() == ".mp4")
+    if compliant:
+        log.info("source already compliant -- remuxing without re-encode")
+        run_ffmpeg(["-i", str(source), "-c", "copy",
+                    "-movflags", "+faststart", str(normalized)])
+        return normalized
 
     vf = []
     if info["height"] > cfg.max_height:
@@ -82,7 +94,9 @@ def run(cfg: Config) -> Path:
     args = ["-i", str(source), "-r", str(cfg.target_fps)]
     if vf:
         args += ["-vf", ",".join(vf)]
-    args += ["-c:v", "libx264", "-preset", "fast", "-crf", "20",
+    # veryfast: this is an intermediate file -- the final clip encode sets
+    # the delivered quality, so spending encode time here buys nothing
+    args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
              "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
              str(normalized)]
     log.info("normalizing to %d fps mp4 ...", cfg.target_fps)

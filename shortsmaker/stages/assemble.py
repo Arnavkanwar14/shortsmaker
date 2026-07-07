@@ -253,7 +253,7 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
         args += [
             "-filter_complex", f"[0:v]{vcut}{vf}{caption}[v];{afilter}",
             "-map", "[v]", "-map", "[a]",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k", "-shortest",
             "-movflags", "+faststart", final.name,
         ]
