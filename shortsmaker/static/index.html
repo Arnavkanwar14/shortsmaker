@@ -132,7 +132,9 @@
   .clip .actions > *:hover { background: var(--canvas); }
   .clip .actions > * + * { border-left: 1px solid var(--hairline); }
   .clip .actions svg { width: 13px; height: 13px; }
-  .thumbs { display: flex; gap: 4px; padding: 8px 8px 0; }
+  .thumbs-label { font-size: 10px; color: var(--mid); text-transform: uppercase;
+    letter-spacing: .05em; padding: 8px 8px 0; }
+  .thumbs { display: flex; gap: 4px; padding: 4px 8px 0; }
   .thumbs a { flex: 1; }
   .thumbs img { width: 100%; aspect-ratio: 9/16; object-fit: cover;
                 border-radius: var(--r-sm); display: block; opacity: .8; }
@@ -499,8 +501,9 @@ function clipCard(c) {
         ${m && m.hashtags && m.hashtags.length ? `<div class="tags">${m.hashtags.slice(0,4).map(t=>`<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}
         <div class="reason">${esc(c.reason)}</div>
       </div>
-      ${c.thumbs ? `<div class="thumbs">${c.thumbs.map(u =>
-        `<a href="${u}" target="_blank" title="open cover frame"><img src="${u}"></a>`).join('')}</div>` : ''}
+      ${c.thumbs ? `<div class="thumbs-label">cover options</div>
+      <div class="thumbs">${c.thumbs.map(u =>
+        `<a href="${u}" target="_blank" title="open full-size cover frame"><img src="${u}"></a>`).join('')}</div>` : ''}
       <div class="actions">
         <a href="${c.url}" download>${ICONS.download}download</a>
         <button onclick="toggle('${scriptId}')">${ICONS.file}script</button>
