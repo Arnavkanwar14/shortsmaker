@@ -347,6 +347,13 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         # blend: heuristics know the audio/editing, the LLM knows the content
         c["score"] = round(0.5 * c["score"] + 0.5 * viral / 99, 4)
         c["reason"] = f"viral {viral}: {g.get('reason', '')}"
+    # ungraded windows must compete on the same scale as graded ones --
+    # blend them with a low neutral prior, otherwise a raw heuristic 0.7
+    # beats a graded viral-80 (blended ~0.65) and ungraded clips win picks
+    prior = 35 / 99
+    for c in graded + rest:
+        if "virality" not in c:
+            c["score"] = round(0.5 * c["score"] + 0.5 * prior, 4)
     n_graded = sum(1 for c in graded if "virality" in c)
     log.info("LLM virality pass: %d candidates graded, %d new windows (1 API call)",
              n_graded, added)

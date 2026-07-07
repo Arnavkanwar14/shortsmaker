@@ -37,126 +37,129 @@ def _cached_model(url: str, filename: str) -> Path:
     return model
 
 
-def _iter_sample_frames(video: Path, start: float, end: float):
-    """Yields (t_relative_to_clip, frame) about once per second."""
+# --- detectors are cached at module level: model load is the slow part,
+# --- and it used to be paid once per CLIP instead of once per process
+_MP = None       # (mediapipe module, detector) | False when unavailable
+_HAAR = None     # cv2.CascadeClassifier | False when unavailable
+
+
+def _detect_cx(frame) -> float | None:
+    """Normalized face-center x (0..1) in one frame. Largest face = the
+    shot's subject (active-speaker detection would need audio-visual sync;
+    prominence is a good proxy). mediapipe first, haar fallback."""
+    global _MP, _HAAR
+    import cv2
+    if _MP is None:
+        try:
+            import mediapipe as mp
+            from mediapipe.tasks.python import BaseOptions, vision
+            det = vision.FaceDetector.create_from_options(
+                vision.FaceDetectorOptions(
+                    base_options=BaseOptions(model_asset_path=str(
+                        _cached_model(BLAZEFACE_URL, "blaze_face_short_range.tflite"))),
+                    min_detection_confidence=0.5))
+            _MP = (mp, det)
+        except Exception as e:
+            log.info("mediapipe unavailable (%s); using haar cascade", str(e)[:100])
+            _MP = False
+    if _MP:
+        mp, det = _MP
+        img = mp.Image(image_format=mp.ImageFormat.SRGB,
+                       data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        res = det.detect(img)
+        if res.detections:
+            box = max((d.bounding_box for d in res.detections),
+                      key=lambda b: b.width * b.height)
+            return (box.origin_x + box.width / 2) / frame.shape[1]
+        return None
+    if _HAAR is None:
+        try:
+            xml = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+            if not xml.exists():
+                xml = _cached_model(HAAR_URL, "haarcascade_frontalface_default.xml")
+            cascade = cv2.CascadeClassifier(str(xml))
+            _HAAR = cascade if not cascade.empty() else False
+        except Exception:
+            _HAAR = False
+    if _HAAR:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = _HAAR.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
+        if len(faces):
+            x, _, fw, _ = max(faces, key=lambda f: f[2] * f[3])
+            return (x + fw / 2) / frame.shape[1]
+    return None
+
+
+def shot_bounds(cuts: list[float], start: float, end: float,
+                min_shot: float = 0.8) -> list[tuple[float, float]]:
+    """Clip-relative shot segments [(s0, s1)] from absolute scene cuts;
+    fragments shorter than min_shot merge into the previous shot."""
+    dur = round(end - start, 2)
+    bounds = [0.0]
+    for c in sorted(cuts):
+        t = round(c - start, 2)
+        if min_shot <= t <= dur - min_shot and t - bounds[-1] >= min_shot:
+            bounds.append(t)
+    bounds.append(dur)
+    return list(zip(bounds, bounds[1:]))
+
+
+def shot_crop_keyframes(video: Path, start: float, end: float,
+                        cuts: list[float]) -> list[tuple[float, float]]:
+    """One crop position per SHOT, snapping exactly at scene cuts.
+
+    Within a shot the subject barely moves, so 2-3 detections + median is
+    enough; between shots the framing jumps like a real edit would. This
+    replaced per-second sampling with hold/glide, which was slower (30+
+    detections per clip) and lagged 1-2s behind every camera cut."""
     import cv2
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    t = start
-    while t < end:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
-        ok, frame = cap.read()
-        if not ok:
-            break
-        yield round(t - start, 2), frame
-        t += 1.0                               # sample 1 frame per second
-    cap.release()
-
-
-def _centers_mediapipe(video: Path, start: float, end: float):
-    """mediapipe >= 0.10 Tasks API (legacy mp.solutions was removed)."""
-    import cv2
-    import mediapipe as mp
-    from mediapipe.tasks.python import BaseOptions, vision
-
-    detector = vision.FaceDetector.create_from_options(
-        vision.FaceDetectorOptions(
-            base_options=BaseOptions(model_asset_path=str(
-                _cached_model(BLAZEFACE_URL, "blaze_face_short_range.tflite"))),
-            min_detection_confidence=0.5))
-    samples = []
-    for t, frame in _iter_sample_frames(video, start, end):
-        img = mp.Image(image_format=mp.ImageFormat.SRGB,
-                       data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        res = detector.detect(img)
-        if res.detections:
-            # largest face = the shot's subject (active-speaker detection
-            # would need audio-visual sync; prominence is a good proxy)
-            box = max((d.bounding_box for d in res.detections),
-                      key=lambda b: b.width * b.height)
-            samples.append((t, (box.origin_x + box.width / 2) / frame.shape[1]))
-    return samples
-
-
-def _centers_haar(video: Path, start: float, end: float):
-    """OpenCV Haar cascade fallback (opencv 5 no longer bundles the XMLs)."""
-    import cv2
-    xml = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
-    if not xml.exists():
-        xml = _cached_model(HAAR_URL, "haarcascade_frontalface_default.xml")
-    cascade = cv2.CascadeClassifier(str(xml))
-    if cascade.empty():
-        raise RuntimeError("could not load haar cascade")
-    samples = []
-    for t, frame in _iter_sample_frames(video, start, end):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
-        if len(faces):
-            x, _, fw, _ = max(faces, key=lambda f: f[2] * f[3])
-            samples.append((t, (x + fw / 2) / frame.shape[1]))
-    return samples
-
-
-def face_samples(video: Path, start: float, end: float) -> list[tuple[float, float]]:
-    """[(t_rel, normalized center x)] about 1/s, best available detector."""
-    for name, fn in (("mediapipe", _centers_mediapipe), ("opencv-haar", _centers_haar)):
-        try:
-            samples = fn(video, start, end)
-        except Exception as e:
-            log.info("face detection via %s unavailable (%s)", name, str(e)[:120])
-            continue
-        if samples:
-            return samples
-    return []
-
-
-def build_crop_path(samples: list[tuple[float, float]], threshold: float = 0.08,
-                    glide: float = 0.4, confirm: int = 2) -> list[tuple[float, float]]:
-    """Hold-then-glide keyframes [(t, cx)] from noisy per-second samples.
-
-    The frame holds still until the subject has clearly moved (> threshold,
-    seen on `confirm` consecutive samples -- stops wobble in two-person
-    shots), then glides to the new position over `glide` seconds.
-    """
-    if not samples:
-        return []
-    cur = samples[0][1]
-    kfs = [(0.0, cur)]
-    pending: list[tuple[float, float]] = []
-    for t, cx in samples[1:]:
-        if abs(cx - cur) <= threshold:
-            pending = []
-            continue
-        pending.append((t, cx))
-        if len(pending) >= confirm:
-            move_t = pending[0][0]
-            target = sum(c for _, c in pending) / len(pending)
-            glide_start = max(move_t - glide, kfs[-1][0] + 0.05)
-            if glide_start < move_t:
-                kfs.append((round(glide_start, 2), cur))
-            kfs.append((round(move_t, 2), round(target, 4)))
-            cur = target
-            pending = []
+    kfs: list[tuple[float, float]] = []
+    prev = 0.5
+    try:
+        for s0, s1 in shot_bounds(cuts, start, end):
+            span = s1 - s0
+            fracs = (0.3, 0.7) if span < 6 else (0.2, 0.5, 0.8)
+            centers = []
+            for f in fracs:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int((start + s0 + span * f) * fps))
+                ok, frame = cap.read()
+                if not ok:
+                    continue
+                cx = _detect_cx(frame)
+                if cx is not None:
+                    centers.append(cx)
+            cx = sorted(centers)[len(centers) // 2] if centers else prev
+            # ignore sub-5% shifts: re-framing for nothing looks like jitter
+            if kfs and abs(cx - kfs[-1][1]) < 0.05:
+                continue
+            kfs.append((s0, round(cx, 4)))
+            prev = cx
+    finally:
+        cap.release()
     return kfs
 
 
-def _crop_x_expr(kfs: list[tuple[float, float]], crop_w: int, w: int) -> str:
-    """Piecewise-linear ffmpeg expression for crop x over time.
-    Segments use gte*lt (not between) so boundaries never double-count,
-    and the result is snapped to even pixels for yuv420."""
+def _crop_x_step_expr(kfs: list[tuple[float, float]], crop_w: int, w: int) -> str:
+    """Piecewise-CONSTANT ffmpeg x expression: the crop snaps at shot cuts.
+    (Gliding across a hard cut reads as a pan glitch, so no interpolation.)
+    gte*lt bounds never double-count; result snapped to even pixels."""
     def px(cx: float) -> int:
         return max(0, min(int(cx * w - crop_w / 2), w - crop_w))
 
     pts = [(t, px(cx)) for t, cx in kfs]
     if len(pts) == 1:
         return str(pts[0][1])
-    terms = [f"lt(t,{pts[0][0]})*{pts[0][1]}"]
-    for (t0, x0), (t1, x1) in zip(pts, pts[1:]):
-        if t1 <= t0:
-            continue
-        terms.append(f"gte(t,{t0})*lt(t,{t1})*"
-                     f"({x0}+({x1}-{x0})*(t-{t0})/({t1}-{t0}))")
-    terms.append(f"gte(t,{pts[-1][0]})*{pts[-1][1]}")
+    terms = []
+    for i, (t, x) in enumerate(pts):
+        if i == 0:
+            cond = f"lt(t,{pts[1][0]})"
+        elif i == len(pts) - 1:
+            cond = f"gte(t,{t})"
+        else:
+            cond = f"gte(t,{t})*lt(t,{pts[i + 1][0]})"
+        terms.append(f"{cond}*{x}")
     return f"trunc(({'+'.join(terms)})/2)*2"
 
 
@@ -173,8 +176,13 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
     crop_w = int(h * target_ar) // 2 * 2                # even width
     kfs: list[tuple[float, float]] = []
     if cfg.face_crop:
-        samples = face_samples(video, clip["start"], clip["end"])
-        kfs = build_crop_path(samples)
+        from ..util import read_json
+        scenes_file = cfg.run_dir / "scenes.json"
+        cuts = read_json(scenes_file) if scenes_file.exists() else []
+        try:
+            kfs = shot_crop_keyframes(video, clip["start"], clip["end"], cuts)
+        except Exception as e:
+            log.info("face crop failed (%s); using center crop", str(e)[:120])
         if keeps and kfs:
             # crop time runs on the post-jump-cut timeline
             from ..edits import remap_time
@@ -186,8 +194,8 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
             kfs = remapped
 
     if len(kfs) >= 2:
-        x_part = f"x='{_crop_x_expr(kfs, crop_w, w)}':y=0"
-        log.info("dynamic speaker crop: %d keyframes", len(kfs))
+        x_part = f"x='{_crop_x_step_expr(kfs, crop_w, w)}':y=0"
+        log.info("shot-snapped speaker crop: %d shots", len(kfs))
     else:
         cx = kfs[0][1] if kfs else 0.5
         if kfs:
