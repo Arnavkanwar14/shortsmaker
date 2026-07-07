@@ -45,6 +45,62 @@ def synth_edge(cfg: Config, text: str, out: Path, rate: str = "+0%") -> list[dic
     return asyncio.run(_edge_synth(text, cfg.voice, rate, out))
 
 
+# --------------------------------------------------------------- kokoro
+_KOKORO = {}
+
+
+def _kokoro_pipeline(voice: str):
+    """Cache one KPipeline per language (model load is the slow part)."""
+    lang = voice[0] if voice[:1] in ("a", "b") else "a"   # af_/am_=US, bf_/bm_=UK
+    if lang not in _KOKORO:
+        from kokoro import KPipeline
+        log.info("loading Kokoro-82M (%s english) -- one-time model download "
+                 "on first use ...", "american" if lang == "a" else "british")
+        _KOKORO[lang] = KPipeline(lang_code=lang)
+    return _KOKORO[lang]
+
+
+def synth_kokoro(cfg: Config, text: str, out: Path, speed: float = 1.0) -> list[dict]:
+    """Local Kokoro-82M: the best-rated open TTS, small enough for CPU.
+    Word timestamps come from Kokoro's own token alignment; whisper
+    forced-alignment is the fallback."""
+    import numpy as np
+    import soundfile as sf
+
+    pipe = _kokoro_pipeline(cfg.kokoro_voice)
+    wav = out.with_suffix(".wav")
+    parts, words = [], []
+    offset = 0.0
+    for result in pipe(text, voice=cfg.kokoro_voice, speed=speed):
+        audio = result.audio
+        if hasattr(audio, "numpy"):
+            audio = audio.numpy()
+        for t in (getattr(result, "tokens", None) or []):
+            ts, te = getattr(t, "start_ts", None), getattr(t, "end_ts", None)
+            text = t.text.strip()
+            if ts is None or not text:
+                continue
+            if not any(ch.isalnum() for ch in text):
+                # punctuation tokens get their own timestamps -- glue them
+                # to the previous word instead of becoming caption "words"
+                if words:
+                    words[-1]["text"] += text
+                continue
+            words.append({"start": round(offset + ts, 3),
+                          "end": round(offset + (te if te is not None else ts + 0.2), 3),
+                          "text": text})
+        parts.append(audio)
+        offset += len(audio) / 24000
+    if not parts:
+        raise RuntimeError("kokoro produced no audio")
+    sf.write(str(wav), np.concatenate(parts), 24000)
+    run_ffmpeg(["-i", str(wav), "-b:a", "192k", str(out)])
+    if not words:
+        words = _align_with_whisper(cfg, wav)
+    wav.unlink(missing_ok=True)
+    return words
+
+
 # ---------------------------------------------------------------- piper
 def synth_piper(cfg: Config, text: str, out: Path) -> list[dict]:
     if not cfg.piper_model:
@@ -82,17 +138,34 @@ def run(cfg: Config, script: str, clip: dict, clip_dir: Path) -> tuple[Path, lis
     # compare against the post-cut length when dead air was trimmed
     clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
 
-    if cfg.tts_engine == "piper":
-        words = synth_piper(cfg, script, audio)
-    else:
-        words = synth_edge(cfg, script, audio)
+    def _edge_with_fit() -> list[dict]:
+        w = synth_edge(cfg, script, audio)
         # if the VO overruns the clip, re-synthesize a bit faster (max +25%)
         vo_len = media_duration(audio)
         if vo_len > clip_len - 0.3:
             speedup = min(vo_len / max(clip_len - 0.5, 1), 1.25)
             rate = f"+{int((speedup - 1) * 100)}%"
             log.info("VO %.1fs > clip %.1fs -- retrying at rate %s", vo_len, clip_len, rate)
-            words = synth_edge(cfg, script, audio, rate=rate)
+            w = synth_edge(cfg, script, audio, rate=rate)
+        return w
+
+    if cfg.tts_engine == "piper":
+        words = synth_piper(cfg, script, audio)
+    elif cfg.tts_engine == "kokoro":
+        try:
+            words = synth_kokoro(cfg, script, audio)
+            vo_len = media_duration(audio)
+            if vo_len > clip_len - 0.3:
+                speed = round(min(vo_len / max(clip_len - 0.5, 1), 1.25), 2)
+                log.info("VO %.1fs > clip %.1fs -- retrying at speed %.2fx",
+                         vo_len, clip_len, speed)
+                words = synth_kokoro(cfg, script, audio, speed=speed)
+        except Exception as e:
+            log.warning("kokoro TTS failed (%s); falling back to edge-tts",
+                        str(e)[:150])
+            words = _edge_with_fit()
+    else:
+        words = _edge_with_fit()
 
     if not words:
         raise RuntimeError("TTS produced no word timestamps")

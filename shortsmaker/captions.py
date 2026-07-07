@@ -3,14 +3,36 @@
 Groups TTS word timestamps into short phrases (one on screen at a time),
 uses karaoke \\kf tags so the spoken word lights up in the accent color,
 and adds a pop-in scale animation per phrase. Keywords get extra pop.
+
+Visuals come from a preset (font, size, colors, keyword treatment) plus a
+position (lower third or center). Colors are ASS &HAABBGGRR& -- BGR order.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-ACCENT = "&H00FFD400&"      # BGR: vivid cyan highlight for spoken words
-PRIMARY = "&H00FFFFFF&"     # white before highlight sweep
+# accent = color the word sweeps TO while spoken; base = color before that
+PRESETS = {
+    "bold": {          # the original look: heavy white with a cyan sweep
+        "font": "Arial Black", "size": 88, "accent": "&H00FFD400&",
+        "base": "&H00FFFFFF&", "outline": 7, "upper_keywords": True,
+    },
+    "beast": {         # oversized yellow-sweep, everything shouts
+        "font": "Arial Black", "size": 100, "accent": "&H0000D4FF&",
+        "base": "&H00FFFFFF&", "outline": 9, "upper_keywords": True,
+    },
+    "minimal": {       # lighter face, white sweep, no uppercasing
+        "font": "Arial", "size": 68, "accent": "&H00FFFFFF&",
+        "base": "&H00B8B8B8&", "outline": 4, "upper_keywords": False,
+    },
+    "karaoke": {       # classic green sweep
+        "font": "Arial Black", "size": 84, "accent": "&H0084DC3D&",
+        "base": "&H00FFFFFF&", "outline": 6, "upper_keywords": False,
+    },
+}
+
+POSITIONS = {"lower": 1420, "center": 980}
 
 HEADER = """[Script Info]
 ScriptType: v4.00+
@@ -21,8 +43,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Kinetic,Arial Black,88,{accent},{primary},&H00000000&,&H80000000&,-1,0,0,0,100,100,1,0,1,7,3,5,60,60,0,1
-Style: Plain,Arial,72,&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H80000000&,-1,0,0,0,100,100,0,0,1,5,2,2,60,60,120,1
+Style: Kinetic,{font},{size},{accent},{base},&H00000000&,&H80000000&,-1,0,0,0,100,100,1,0,1,{outline},3,5,60,60,0,1
+Style: Plain,{font},{plain_size},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H80000000&,-1,0,0,0,100,100,0,0,1,5,2,2,60,60,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -57,32 +79,35 @@ def group_phrases(words: list[dict], max_words: int = 4, max_chars: int = 22,
     return phrases
 
 
-def _phrase_text_kinetic(phrase: list[dict]) -> str:
-    """Karaoke sweep + pop-in; keywords uppercased with extra scale punch."""
-    parts = [r"{\an5\pos(540,1420)\fad(60,40)"
+def _phrase_text_kinetic(phrase: list[dict], y: int, upper_keywords: bool) -> str:
+    """Karaoke sweep + pop-in; keywords optionally uppercased with extra punch."""
+    parts = [rf"{{\an5\pos(540,{y})\fad(60,40)"
              r"\t(0,110,\fscx112\fscy112)\t(110,220,\fscx100\fscy100)}"]
-    t0 = phrase[0]["start"]
     for w in phrase:
         dur_cs = max(int((w["end"] - w["start"]) * 100), 1)
         text = w["text"]
         if KEYWORD.search(text):
-            text = text.upper()
+            if upper_keywords:
+                text = text.upper()
             parts.append(rf"{{\kf{dur_cs}\fscx108\fscy108}}{text} ")
         else:
             parts.append(rf"{{\kf{dur_cs}\fscx100\fscy100}}{text} ")
-        # lead-in silence inside the phrase becomes part of the first word
-        _ = t0
     return "".join(parts).rstrip()
 
 
-def build_ass(words: list[dict], style: str = "kinetic") -> str:
-    out = [HEADER.format(accent=ACCENT, primary=PRIMARY)]
+def build_ass(words: list[dict], style: str = "kinetic",
+              preset: str = "bold", position: str = "lower") -> str:
+    p = PRESETS.get(preset, PRESETS["bold"])
+    y = POSITIONS.get(position, POSITIONS["lower"])
+    out = [HEADER.format(font=p["font"], size=p["size"], accent=p["accent"],
+                         base=p["base"], outline=p["outline"],
+                         plain_size=max(p["size"] - 16, 56))]
     if style == "none" or not words:
         return out[0]
     for phrase in group_phrases(words):
         start, end = phrase[0]["start"], phrase[-1]["end"] + 0.08
         if style == "kinetic":
-            text = _phrase_text_kinetic(phrase)
+            text = _phrase_text_kinetic(phrase, y, p["upper_keywords"])
             out.append(f"Dialogue: 0,{_ts(start)},{_ts(end)},Kinetic,,0,0,0,,{text}\n")
         else:
             plain = " ".join(w["text"] for w in phrase)
@@ -90,6 +115,7 @@ def build_ass(words: list[dict], style: str = "kinetic") -> str:
     return "".join(out)
 
 
-def write_ass(words: list[dict], path: Path, style: str = "kinetic") -> Path:
-    path.write_text(build_ass(words, style), encoding="utf-8")
+def write_ass(words: list[dict], path: Path, style: str = "kinetic",
+              preset: str = "bold", position: str = "lower") -> Path:
+    path.write_text(build_ass(words, style, preset, position), encoding="utf-8")
     return path

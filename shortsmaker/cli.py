@@ -48,13 +48,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="explicit spans, skips auto-detection: "
                         "'12:30-13:10, 745-790'")
     r.add_argument("--style", choices=["kinetic", "plain", "none"])
+    r.add_argument("--caption-preset", dest="caption_preset",
+                   choices=["bold", "beast", "minimal", "karaoke"])
+    r.add_argument("--caption-position", dest="caption_position",
+                   choices=["lower", "center"])
+    r.add_argument("--kokoro-voice", dest="kokoro_voice",
+                   help="local Kokoro voice, e.g. af_heart, am_michael")
     r.add_argument("--clean", type=lambda s: s.lower() in ("1", "true", "yes"),
                    help="true/false: inpaint burned-in captions/watermarks (slow)")
     r.add_argument("--llm-provider", dest="llm_provider",
                    choices=["auto", "ollama", "groq", "gemini", "none"])
     r.add_argument("--ollama-model", dest="ollama_model")
     r.add_argument("--whisper-model", dest="whisper_model")
-    r.add_argument("--tts-engine", dest="tts_engine", choices=["edge", "piper"])
+    r.add_argument("--tts-engine", dest="tts_engine",
+                   choices=["edge", "kokoro", "piper"])
     r.add_argument("--piper-model", dest="piper_model")
     r.add_argument("--force", action="store_true",
                    help="re-run stages even if their outputs exist")

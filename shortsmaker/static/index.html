@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shortsmaker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230a0a0a'/%3E%3Cpath d='M9 7l8 5-8 5V7z' fill='white'/%3E%3C/svg%3E">
 <style>
   :root {
     --canvas: #f5f5f5; --paper: #ffffff; --surface-alt: #fafafa;
@@ -177,6 +178,32 @@
     border-top-color: var(--ink); border-radius: 50%; display: inline-block;
     animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ------------------------------------------------------------ stepper */
+  .steps { display: flex; align-items: center; gap: 0; margin-bottom: 14px;
+           flex-wrap: wrap; }
+  .step { display: flex; align-items: center; gap: 7px; font-size: 12px;
+          color: var(--mid); }
+  .step .dot { width: 22px; height: 22px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; background: var(--canvas);
+    border: 1px solid var(--hairline); font-size: 10.5px; font-weight: 600;
+    color: var(--mid); flex-shrink: 0; }
+  .step.current { color: var(--ink); font-weight: 500; }
+  .step.current .dot { border-color: var(--ink); color: var(--ink); }
+  .step.done .dot { background: var(--ink); border-color: var(--ink);
+    color: var(--paper); }
+  .step.done { color: var(--ink); }
+  .step-line { width: 22px; height: 1px; background: var(--hairline);
+               margin: 0 8px; flex-shrink: 0; }
+  details.logbox summary { font-size: 11.5px; color: var(--mid); cursor: pointer;
+    margin: 12px 0 8px; user-select: none; }
+
+  /* -------------------------------------------------------------- toast */
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--paper); font-size: 13px; padding: 10px 18px;
+    border-radius: var(--r-ctl); box-shadow: var(--shadow-card); opacity: 0;
+    pointer-events: none; transition: opacity .2s; z-index: 99; }
+  #toast.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -241,8 +268,26 @@
           </div>
         </div>
         <div id="voSettings" style="display:none">
-          <div class="section-label">Voice</div>
-          <select id="voice"></select>
+          <div class="section-label">Voice engine</div>
+          <select id="tts_engine" onchange="engineToggle()">
+            <option value="edge" selected>edge-tts &mdash; fast, many voices, needs internet</option>
+            <option value="kokoro">kokoro &mdash; best quality, runs locally, slower first load</option>
+          </select>
+          <div id="edgeVoiceWrap">
+            <div class="section-label">Voice</div>
+            <select id="voice"></select>
+          </div>
+          <div id="kokoroVoiceWrap" style="display:none">
+            <div class="section-label">Kokoro voice</div>
+            <select id="kokoro_voice">
+              <option value="af_heart" selected>af_heart &mdash; warm female (best rated)</option>
+              <option value="af_bella">af_bella &mdash; bright female</option>
+              <option value="am_michael">am_michael &mdash; deep male</option>
+              <option value="am_fenrir">am_fenrir &mdash; energetic male</option>
+              <option value="bf_emma">bf_emma &mdash; british female</option>
+              <option value="bm_george">bm_george &mdash; british male</option>
+            </select>
+          </div>
           <div class="row" style="margin-top:10px">
             <div><div class="section-label" style="margin-top:0">Voiceover volume %</div>
               <input type="number" id="vo_volume" min="0" max="200" value="100"></div>
@@ -289,6 +334,20 @@
               <option value="medium">medium (slowest)</option>
             </select></div>
         </div>
+        <div class="row" style="margin-top:10px">
+          <div><div class="section-label" style="margin-top:0">Caption style</div>
+            <select id="caption_preset">
+              <option value="bold" selected>bold &mdash; heavy white, cyan sweep</option>
+              <option value="beast">beast &mdash; oversized, yellow sweep</option>
+              <option value="minimal">minimal &mdash; clean, subtle</option>
+              <option value="karaoke">karaoke &mdash; classic green sweep</option>
+            </select></div>
+          <div><div class="section-label" style="margin-top:0">Caption position</div>
+            <select id="caption_position">
+              <option value="lower" selected>lower third</option>
+              <option value="center">center</option>
+            </select></div>
+        </div>
         <div class="hint">Whisper transcribes the source video's speech. Bigger = more accurate transcript (better highlight picks + better AI scripts) but slower on CPU. tiny &asymp; 8x faster than small. GPU is used automatically when available.</div>
 
         <div class="section-label">Script LLM</div>
@@ -311,7 +370,11 @@
           <span class="badge idle" id="badge">idle</span>
           <span id="statusText"></span>
         </div>
-        <div id="log">waiting for a job...</div>
+        <div class="steps" id="steps" style="display:none"></div>
+        <details class="logbox" id="logbox">
+          <summary>show pipeline log</summary>
+          <div id="log">waiting for a job...</div>
+        </details>
         <div class="cost" id="cost" style="display:none"></div>
         <div class="clips" id="clips"></div>
       </div>
@@ -330,6 +393,7 @@
     <div id="runs"><div class="empty">loading...</div></div>
   </div>
 </div>
+<div id="toast"></div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -382,6 +446,56 @@ function setMode(vo) {
   $('voSettings').style.display = vo ? 'block' : 'none';
 }
 
+function engineToggle() {
+  const kokoro = $('tts_engine').value === 'kokoro';
+  $('edgeVoiceWrap').style.display = kokoro ? 'none' : 'block';
+  $('kokoroVoiceWrap').style.display = kokoro ? 'block' : 'none';
+}
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// remember the user's settings between visits
+const SAVED_FIELDS = ['num_clips','duration','voice','style','llm_provider',
+  'whisper_model','content_type','trim_silence','caption_preset',
+  'caption_position','tts_engine','kokoro_voice'];
+function saveSettings() {
+  const s = Object.fromEntries(SAVED_FIELDS.map(k => [k, $(k).value]));
+  s._voMode = voMode;
+  localStorage.setItem('shortsmaker', JSON.stringify(s));
+}
+function restoreSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('shortsmaker') || '{}');
+    for (const k of SAVED_FIELDS)
+      if (s[k] != null && $(k).querySelector?.(`option[value="${s[k]}"]`) !== null)
+        $(k).value = s[k];
+    if (s._voMode) setMode(true);
+    engineToggle();
+  } catch (e) { /* corrupted storage: defaults win */ }
+}
+
+const STAGES = [['ingest','Download'],['transcribe','Transcribe'],
+                ['highlights','Find moments'],['clip','Render clips']];
+function renderSteps(stage, detail) {
+  if (!stage) { $('steps').style.display = 'none'; return; }
+  $('steps').style.display = 'flex';
+  const idx = stage === 'done' ? STAGES.length
+            : STAGES.findIndex(([k]) => k === stage);
+  $('steps').innerHTML = STAGES.map(([k, label], i) => {
+    const cls = i < idx ? 'done' : (i === idx ? 'current' : '');
+    const dot = i < idx ? ICONS.check : i + 1;
+    const extra = (k === 'clip' && i === idx && detail) ? ` ${detail}` : '';
+    return `<div class="step ${cls}"><span class="dot">${dot}</span>${label}${extra}</div>`
+         + (i < STAGES.length - 1 ? '<span class="step-line"></span>' : '');
+  }).join('');
+}
+
 $('drop').onclick = () => $('file').click();
 $('file').onchange = () => setFile($('file').files[0]);
 ['dragover','dragleave','drop'].forEach(ev => $('drop').addEventListener(ev, e => {
@@ -401,13 +515,15 @@ $('go').onclick = async () => {
   if (pickedFile) fd.append('file', pickedFile);
   for (const k of ['num_clips','duration','voice','style','llm_provider',
                    'whisper_model','content_type','trim_silence',
-                   'focus','manual_clips'])
+                   'focus','manual_clips','caption_preset','caption_position',
+                   'tts_engine','kokoro_voice'])
     fd.append(k, $(k).value);
   fd.append('voiceover', voMode ? 'true' : 'false');
   fd.append('vo_volume', $('vo_volume').value / 100);
   // caption mode: -1 lets the backend keep the original audio at 100%
   fd.append('bg_volume', voMode ? $('bg_volume').value / 100 : -1);
-  if (!$('url').value.trim() && !pickedFile) { alert('Give a URL or a file'); return; }
+  if (!$('url').value.trim() && !pickedFile) { toast('Give a URL or a file first'); return; }
+  saveSettings();
 
   $('go').disabled = true;
   $('clips').innerHTML = ''; $('cost').style.display = 'none';
@@ -459,8 +575,10 @@ function pollOne(id, tag) {
       const j = await r.json();
       $('log').textContent = j.log.join('\n') || '...';
       $('log').scrollTop = $('log').scrollHeight;
+      renderSteps(j.stage, j.stage_detail);
       if (j.status === 'running' || j.status === 'queued') {
-        setBadge('running', tag + 'transcription is usually the slow part');
+        setBadge('running', tag + (j.stage === 'transcribe'
+          ? 'transcribing -- usually the slow part' : ''));
         return;
       }
       clearInterval(pollTimer);
@@ -543,7 +661,7 @@ async function loadLibrary() {
       <div class="card runcard">
         <div class="runhead">
           <div>
-            <div class="title">${esc(shortInput(r.input))}</div>
+            <div class="title">${esc(r.title || shortInput(r.input))}</div>
             <div class="info">${esc(r.created).replace('T', ' ')} &middot;
               ${r.clips.filter(c => c.status === 'ok').length}/${r.clips.length} clips &middot;
               voice ${esc(r.settings.voice || '?')} &middot; llm ${esc(r.settings.llm_provider || '?')}
@@ -567,10 +685,12 @@ function shortInput(inp) {
 async function deleteRun(id) {
   if (!confirm('Delete this run and all its clips + downloaded source?')) return;
   const r = await fetch('/api/runs/' + id, { method: 'DELETE' });
-  if (!r.ok) alert((await r.json()).detail || 'delete failed');
+  if (!r.ok) toast((await r.json()).detail || 'delete failed');
+  else toast('run deleted');
   loadLibrary();
 }
 
+restoreSettings();
 loadLibrary();
 </script>
 </body>

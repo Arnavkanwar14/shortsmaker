@@ -56,7 +56,9 @@ class Config:
     voiceover: bool = True          # off: keep original audio, captions come
                                     # from the source speech instead of TTS
     vo_volume: float = 1.0          # voiceover loudness (0..1+)
-    tts_engine: str = "edge"        # edge | piper
+    tts_engine: str = "edge"        # edge | kokoro | piper
+    kokoro_voice: str = "af_heart"  # local Kokoro-82M voice (best open TTS;
+                                    # runs on CPU, falls back to edge-tts)
     voice: str = "en-US-AndrewMultilingualNeural"  # edge-tts voice; the
                                     # *MultilingualNeural voices are the newest
                                     # generation and sound far less robotic
@@ -70,6 +72,8 @@ class Config:
 
     # ---- assemble ----
     style: str = "kinetic"          # kinetic | plain | none (captions style)
+    caption_preset: str = "bold"    # bold | beast | minimal | karaoke
+    caption_position: str = "lower" # lower | center
     out_width: int = 1080
     out_height: int = 1920
     bg_audio_volume: float = -1.0   # original-audio volume; -1 = auto
@@ -130,3 +134,7 @@ def groq_api_key() -> str:
 
 def gemini_api_key() -> str:
     return os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+
+
+def hf_token() -> str:
+    return os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACE_TOKEN", "")

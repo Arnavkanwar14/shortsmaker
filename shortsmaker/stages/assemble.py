@@ -216,7 +216,8 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
         vo_audio = vo_audio.resolve()
 
     ass_file = clip_dir / "captions.ass"
-    write_ass(caption_words, ass_file, style=cfg.style)
+    write_ass(caption_words, ass_file, style=cfg.style,
+              preset=cfg.caption_preset, position=cfg.caption_position)
 
     vf = crop_filter(cfg, video, clip, keeps)
     with_captions = cfg.style != "none" and caption_words

@@ -46,10 +46,13 @@ def _worker(job_id: str, cfg: Config) -> None:
     job = JOBS[job_id]
     handler = _JobLogHandler(job["log"])
     logging.getLogger("shortsmaker").addHandler(handler)
+    def _progress(stage: str, detail: str) -> None:
+        job["stage"], job["stage_detail"] = stage, detail
+
     try:
         with JOB_LOCK:
             job["status"] = "running"
-            manifest = run_pipeline(cfg)
+            manifest = run_pipeline(cfg, progress=_progress)
         ok = sum(1 for c in manifest["clips"] if c["status"] == "ok")
         job["manifest"] = manifest
         job["status"] = "done" if ok else "failed"
@@ -84,6 +87,10 @@ async def create_job(
     trim_silence: str = Form("auto"),
     focus: str = Form(""),
     manual_clips: str = Form(""),
+    caption_preset: str = Form("bold"),
+    caption_position: str = Form("lower"),
+    tts_engine: str = Form("edge"),
+    kokoro_voice: str = Form("af_heart"),
 ):
     # batch mode: one job per URL line; upload = single job
     urls = [u.strip() for u in url.splitlines() if u.strip()]
@@ -110,7 +117,10 @@ async def create_job(
                      voiceover=voiceover.lower() in ("1", "true", "yes"),
                      vo_volume=vo_volume, bg_audio_volume=bg_volume,
                      content_type=content_type, trim_silence=trim_silence,
-                     focus=focus.strip(), manual_clips=manual_clips.strip())
+                     focus=focus.strip(), manual_clips=manual_clips.strip(),
+                     caption_preset=caption_preset,
+                     caption_position=caption_position,
+                     tts_engine=tts_engine, kokoro_voice=kokoro_voice)
         cfg.min_duration = max(duration - 15, 15)
         cfg.max_duration = duration + 15
         cfg.run_id = derive_run_id(cfg.input)
@@ -145,6 +155,7 @@ def job_status(job_id: str):
     if not job:
         raise HTTPException(404, "unknown job")
     resp = {"status": job["status"], "run_id": job["run_id"],
+            "stage": job.get("stage"), "stage_detail": job.get("stage_detail"),
             "log": list(job["log"]), "error": job.get("error")}
     if job["manifest"]:
         resp["clips"] = _clip_urls(job["manifest"]["clips"], job["run_id"])
@@ -164,8 +175,14 @@ def list_runs():
         except Exception:
             continue
         clips = _clip_urls(m.get("clips", []), m.get("run_id", mf.parent.name))
+        meta_file = mf.parent / "meta.json"
+        try:
+            title = json.loads(meta_file.read_text(encoding="utf-8")).get("title", "")
+        except Exception:
+            title = ""
         runs.append({
             "run_id": m.get("run_id", mf.parent.name),
+            "title": title,
             "input": m.get("input", ""),
             "created": m.get("created", ""),
             "settings": m.get("settings", {}),

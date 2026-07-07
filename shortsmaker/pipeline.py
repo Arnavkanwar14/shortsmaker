@@ -58,7 +58,13 @@ def derive_run_id(input_str: str) -> str:
     return f"{slug}-{digest}"
 
 
-def run(cfg: Config) -> dict:
+def run(cfg: Config, progress=None) -> dict:
+    """progress: optional callback(stage, detail) -- stages are
+    'ingest' | 'transcribe' | 'highlights' | 'clip' | 'done'."""
+    def _p(stage: str, detail: str = "") -> None:
+        if progress:
+            progress(stage, detail)
+
     if not cfg.run_id:
         cfg.run_id = derive_run_id(cfg.input)
     run_dir = cfg.run_dir
@@ -68,16 +74,19 @@ def run(cfg: Config) -> dict:
     log.info("=== run %s -> %s ===", cfg.run_id, run_dir)
 
     # ---- stages 1-3 (whole-video) ----
+    _p("ingest")
     video = ingest.run(cfg)
     src_minutes = media_duration(video) / 60
     meta_file = run_dir / "meta.json"
     meta = read_json(meta_file) if meta_file.exists() else {}
 
+    _p("transcribe")
     transcript = transcribe.run(cfg, video)
     ledger.add("transcribe", src_minutes)
 
     if cfg.clean:
         video = cleanup.run(cfg, video)
+    _p("highlights")
 
     if cfg.manual_clips:
         spans = parse_manual_clips(cfg.manual_clips)
@@ -97,6 +106,7 @@ def run(cfg: Config) -> dict:
     # ---- stages 4-6 (per clip, failure-isolated) ----
     manifest_clips = []
     for idx, clip in enumerate(clips, 1):
+        _p("clip", f"{idx}/{len(clips)}")
         # manual spans get their own span-named dirs so they never collide
         # with (or wrongly reuse) a previous auto run's cached clip outputs
         name = (f"manual_{int(clip['start'])}-{int(clip['end'])}"
@@ -172,6 +182,7 @@ def run(cfg: Config) -> dict:
         "saas_cost_equivalent": ledger.as_dict(),
     }
     write_json(run_dir / "manifest.json", manifest)
+    _p("done")
 
     ok = sum(1 for c in manifest_clips if c["status"] == "ok")
     log.info("=== done: %d/%d clips OK | SaaS equivalent ~%s credits saved | %s ===",
