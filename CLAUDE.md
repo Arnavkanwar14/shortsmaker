@@ -21,6 +21,13 @@ Keep LLM usage at ~1 call per run for highlights + 1 per clip for scripts.
 Never add per-candidate or retry-loop LLM calls — free tier.
 
 ## Gotchas (all discovered the hard way)
+- GPU whisper works on this machine via pip `nvidia-cublas-cu12` +
+  `nvidia-cudnn-cu12` (no CUDA Toolkit needed), but the DLL dirs must be
+  prepended to PATH -- `transcribe._register_cuda_dlls()` does it.
+  GPU only pays off on `small`+ models (~2.4x); `tiny` is CPU-bound.
+- Batched whisper returns coarse ~30s segments; `_sentence_segments()`
+  rebuilds sentence granularity from word timestamps -- keep it, the
+  highlight windowing depends on it.
 - edge-tts 7.x needs `boundary="WordBoundary"` or you get no word timestamps.
 - mediapipe ≥0.10.35 removed `mp.solutions`; use the Tasks API (models
   auto-download to `~/.cache/shortsmaker/`).

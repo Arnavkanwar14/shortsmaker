@@ -82,10 +82,12 @@ async def create_job(
     bg_volume: float = Form(-1.0),
     content_type: str = Form("auto"),
     trim_silence: str = Form("auto"),
+    focus: str = Form(""),
+    manual_clips: str = Form(""),
 ):
-    if not url and (file is None or not file.filename):
-        raise HTTPException(400, "provide a URL or upload a file")
-
+    # batch mode: one job per URL line; upload = single job
+    urls = [u.strip() for u in url.splitlines() if u.strip()]
+    inputs: list[str] = []
     if file is not None and file.filename:
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
         safe = "".join(c for c in file.filename if c.isalnum() or c in "._- ")
@@ -93,27 +95,48 @@ async def create_job(
         with open(dest, "wb") as f:
             while chunk := await file.read(1 << 20):
                 f.write(chunk)
-        input_src = str(dest)
-    else:
-        input_src = url.strip()
+        inputs.append(str(dest))
+    inputs.extend(urls)
+    if not inputs:
+        raise HTTPException(400, "provide a URL (one per line for a batch) "
+                                 "or upload a file")
 
-    cfg = Config(input=input_src, workdir=str(RUNS_DIR),
-                 num_clips=num_clips, duration=duration, voice=voice,
-                 style=style, llm_provider=llm_provider,
-                 whisper_model=whisper_model,
-                 voiceover=voiceover.lower() in ("1", "true", "yes"),
-                 vo_volume=vo_volume, bg_audio_volume=bg_volume,
-                 content_type=content_type, trim_silence=trim_silence)
-    cfg.min_duration = max(duration - 15, 15)
-    cfg.max_duration = duration + 15
-    cfg.run_id = derive_run_id(cfg.input)
+    jobs = []
+    for input_src in inputs:
+        cfg = Config(input=input_src, workdir=str(RUNS_DIR),
+                     num_clips=num_clips, duration=duration, voice=voice,
+                     style=style, llm_provider=llm_provider,
+                     whisper_model=whisper_model,
+                     voiceover=voiceover.lower() in ("1", "true", "yes"),
+                     vo_volume=vo_volume, bg_audio_volume=bg_volume,
+                     content_type=content_type, trim_silence=trim_silence,
+                     focus=focus.strip(), manual_clips=manual_clips.strip())
+        cfg.min_duration = max(duration - 15, 15)
+        cfg.max_duration = duration + 15
+        cfg.run_id = derive_run_id(cfg.input)
 
-    job_id = uuid.uuid4().hex[:12]
-    JOBS[job_id] = {"status": "queued", "run_id": cfg.run_id,
-                    "input": input_src, "log": collections.deque(maxlen=400),
-                    "manifest": None}
-    threading.Thread(target=_worker, args=(job_id, cfg), daemon=True).start()
-    return {"job_id": job_id, "run_id": cfg.run_id}
+        job_id = uuid.uuid4().hex[:12]
+        JOBS[job_id] = {"status": "queued", "run_id": cfg.run_id,
+                        "input": input_src, "log": collections.deque(maxlen=400),
+                        "manifest": None}
+        # JOB_LOCK inside the worker serializes the pipeline runs
+        threading.Thread(target=_worker, args=(job_id, cfg), daemon=True).start()
+        jobs.append({"job_id": job_id, "run_id": cfg.run_id})
+
+    return {"job_id": jobs[0]["job_id"], "run_id": jobs[0]["run_id"], "jobs": jobs}
+
+
+def _clip_urls(clips: list[dict], run_id: str) -> list[dict]:
+    out = []
+    for c in clips:
+        c = dict(c)
+        if c.get("file"):
+            c["url"] = f"/runs/{run_id}/" + c["file"].replace("\\", "/")
+        if c.get("thumbs"):
+            c["thumbs"] = [f"/runs/{run_id}/clips/{c['clip']}/{t}"
+                           for t in c["thumbs"]]
+        out.append(c)
+    return out
 
 
 @app.get("/api/jobs/{job_id}")
@@ -124,13 +147,7 @@ def job_status(job_id: str):
     resp = {"status": job["status"], "run_id": job["run_id"],
             "log": list(job["log"]), "error": job.get("error")}
     if job["manifest"]:
-        clips = []
-        for c in job["manifest"]["clips"]:
-            c = dict(c)
-            if c.get("file"):
-                c["url"] = f"/runs/{job['run_id']}/" + c["file"].replace("\\", "/")
-            clips.append(c)
-        resp["clips"] = clips
+        resp["clips"] = _clip_urls(job["manifest"]["clips"], job["run_id"])
         resp["cost"] = job["manifest"]["saas_cost_equivalent"]
     return JSONResponse(resp)
 
@@ -146,12 +163,7 @@ def list_runs():
             m = json.loads(mf.read_text(encoding="utf-8"))
         except Exception:
             continue
-        clips = []
-        for c in m.get("clips", []):
-            c = dict(c)
-            if c.get("file"):
-                c["url"] = f"/runs/{m['run_id']}/" + c["file"].replace("\\", "/")
-            clips.append(c)
+        clips = _clip_urls(m.get("clips", []), m.get("run_id", mf.parent.name))
         runs.append({
             "run_id": m.get("run_id", mf.parent.name),
             "input": m.get("input", ""),

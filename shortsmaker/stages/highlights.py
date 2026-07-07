@@ -183,6 +183,15 @@ def snap_to_scene(t: float, cuts: list[float], tol: float = 1.5) -> tuple[float,
     return t, False
 
 
+def focus_score(text: str, focus: str) -> float:
+    """Fraction of the user's focus terms present in a window's text."""
+    terms = [t for t in re.split(r"[,;/]|\s+", focus.lower()) if len(t) > 2]
+    if not terms:
+        return 0.0
+    tl = text.lower()
+    return sum(1 for t in terms if t in tl) / len(terms)
+
+
 def score_windows(windows, cuts, times, rms, cfg: Config, profile: str) -> list[dict]:
     weights = PROFILES[profile]
     speech_rates = [len(w["text"].split()) / max(w["end"] - w["start"], 1)
@@ -203,14 +212,20 @@ def score_windows(windows, cuts, times, rms, cfg: Config, profile: str) -> list[
             "energy_burst": energy_burst_score(times, rms, w["start"], w["end"]),
         }
         score = sum(weights[k] * v for k, v in signals.items())
+        shown = {k: round(v, 3) for k, v in signals.items() if weights[k]}
+        if cfg.focus:
+            # user asked for specific moments: a strong extra signal on top
+            # of whatever the content profile scores
+            fs = focus_score(w["text"], cfg.focus)
+            score += 0.45 * fs
+            shown["focus"] = round(fs, 3)
         scored.append({
             "start": round(start, 2), "end": round(w["end"], 2),
             "score": round(score, 4),
-            "signals": {k: round(v, 3) for k, v in signals.items() if weights[k]},
+            "signals": shown,
             "text": w["text"],
             "reason": f"heuristic[{profile}]: " + (", ".join(
-                k for k, v in signals.items() if v >= 0.6 and weights[k] > 0)
-                or "mixed signals"),
+                k for k, v in shown.items() if v >= 0.6) or "mixed signals"),
         })
     return scored
 
@@ -255,10 +270,14 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         f'{i}: [{c["start"]:.0f}s-{c["end"]:.0f}s] "{(c["text"] or "(no speech)")[:280]}"'
         for i, c in enumerate(top))
 
+    focus_line = (f"IMPORTANT: the user specifically wants clips about: "
+                  f"\"{cfg.focus}\". Grade segments matching that high and "
+                  f"unrelated segments low, and prefer matching moments for "
+                  f"any NEW windows you add.\n\n" if cfg.focus else "")
     prompt = (
         f"A {duration:.0f}-second video. Transcript (timestamped):\n"
         f"{transcript_block}\n\n"
-        f"Candidate clips to grade:\n{listing}\n\n"
+        f"Candidate clips to grade:\n{listing}\n\n{focus_line}"
         f"Grade EACH candidate as a standalone viral short ({CONTENT_HINTS[profile]}). "
         "Score 0-99 on: hook (do the first seconds grab attention?), "
         "flow (complete thought, no mid-idea chop?), value (takeaway, emotion, "

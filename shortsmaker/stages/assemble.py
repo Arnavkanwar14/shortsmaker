@@ -272,3 +272,17 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
 
     log.info("exported %s", final)
     return final
+
+
+def thumbnails(final: Path, clip_dir: Path, n: int = 3) -> list[str]:
+    """Candidate cover frames at 25/50/75% -- platforms ask for one at
+    upload time. Returns filenames relative to the clip dir."""
+    from ..util import media_duration
+    dur = media_duration(final)
+    names = []
+    for i, frac in enumerate((0.25, 0.5, 0.75), 1):
+        name = f"thumb_{i}.jpg"
+        run_ffmpeg(["-ss", f"{max(dur * frac, 0.1):.2f}", "-i", final.name,
+                    "-frames:v", "1", "-q:v", "3", name], cwd=clip_dir)
+        names.append(name)
+    return names

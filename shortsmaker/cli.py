@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--trim-silence", dest="trim_silence",
                    choices=["auto", "on", "off"],
                    help="jump-cut dead air and um/uh fillers (default auto)")
+    r.add_argument("--focus", help="keywords/description of wanted moments, "
+                                   "e.g. 'boss fight' or 'funny fails'")
+    r.add_argument("--clips", dest="manual_clips",
+                   help="explicit spans, skips auto-detection: "
+                        "'12:30-13:10, 745-790'")
     r.add_argument("--style", choices=["kinetic", "plain", "none"])
     r.add_argument("--clean", type=lambda s: s.lower() in ("1", "true", "yes"),
                    help="true/false: inpaint burned-in captions/watermarks (slow)")

@@ -78,6 +78,11 @@
     font-weight: 600; color: var(--accent); text-decoration: none; background: none;
     border: 0; cursor: pointer; font-family: inherit; }
   .clip .actions > * + * { border-left: 1px solid #2c3140; }
+  .thumbs { display: flex; gap: 4px; padding: 6px 8px 0; }
+  .thumbs a { flex: 1; }
+  .thumbs img { width: 100%; aspect-ratio: 9/16; object-fit: cover;
+                border-radius: 6px; display: block; opacity: .85; }
+  .thumbs img:hover { opacity: 1; }
   .script { display: none; padding: 10px 12px; font-size: 12px; line-height: 1.5;
     color: #c8cdd8; border-top: 1px solid #2c3140; background: #171922; }
   .cost { margin-top: 12px; font-size: 13px; color: var(--accent2); }
@@ -117,8 +122,9 @@
   <div class="tab active" id="create">
     <div class="grid">
       <div class="card">
-        <label>Video URL (YouTube etc.)</label>
-        <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+        <label>Video URL(s) &mdash; one per line for a batch</label>
+        <textarea id="url" rows="2" placeholder="https://www.youtube.com/watch?v=..."
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2c3140;background:var(--panel2);color:var(--text);font-size:14px;font-family:inherit;resize:vertical"></textarea>
         <label>&mdash; or upload a file &mdash;</label>
         <div class="drop" id="drop">click or drop a video here</div>
         <input type="file" id="file" accept="video/*" style="display:none">
@@ -155,6 +161,11 @@
             narration stays listenable &mdash; raise it if the source sound
             matters, e.g. 40-60% for gameplay.</div>
         </div>
+        <label>Find moments about (optional)</label>
+        <input type="text" id="focus"
+               placeholder="e.g. boss fight, funny fails, when they talk pricing">
+        <label>Manual clips (optional, skips auto-detection)</label>
+        <input type="text" id="manual_clips" placeholder="12:30-13:10, 45:02-45:50">
         <div class="row">
           <div><label>Content type</label>
             <select id="content_type">
@@ -263,7 +274,8 @@ $('go').onclick = async () => {
   fd.append('url', $('url').value.trim());
   if (pickedFile) fd.append('file', pickedFile);
   for (const k of ['num_clips','duration','voice','style','llm_provider',
-                   'whisper_model','content_type','trim_silence'])
+                   'whisper_model','content_type','trim_silence',
+                   'focus','manual_clips'])
     fd.append(k, $(k).value);
   fd.append('voiceover', voMode ? 'true' : 'false');
   fd.append('vo_volume', $('vo_volume').value / 100);
@@ -277,8 +289,8 @@ $('go').onclick = async () => {
   try {
     const r = await fetch('/api/jobs', { method: 'POST', body: fd });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
-    const { job_id } = await r.json();
-    poll(job_id);
+    const { jobs } = await r.json();
+    pollQueue(jobs);
   } catch (e) {
     setBadge('failed', e.message); $('go').disabled = false;
   }
@@ -291,27 +303,41 @@ function setBadge(state, text) {
     ? `<span class="spinner"></span> ${text || ''}` : (text || '');
 }
 
-function poll(id) {
-  clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    const r = await fetch('/api/jobs/' + id);
-    if (!r.ok) return;
-    const j = await r.json();
-    $('log').textContent = j.log.join('\n') || '...';
-    $('log').scrollTop = $('log').scrollHeight;
-    if (j.status === 'running' || j.status === 'queued') {
-      setBadge('running', 'pipeline running -- transcription is the slow part');
-      return;
-    }
-    clearInterval(pollTimer); $('go').disabled = false;
-    setBadge(j.status, j.status === 'failed' ? (j.error || 'see log') : 'finished');
+async function pollQueue(jobs) {
+  let failed = 0;
+  for (let i = 0; i < jobs.length; i++) {
+    const tag = jobs.length > 1 ? `job ${i + 1}/${jobs.length} -- ` : '';
+    const j = await pollOne(jobs[i].job_id, tag);
+    if (j.status === 'failed') failed++;
     if (j.clips) {
       $('clips').innerHTML = j.clips.map(clipCard).join('');
       if (j.cost) $('cost').textContent =
         `a credit-based SaaS would have charged ~${j.cost.total_credits_equivalent} credits for this run - you paid $0`;
     }
     loadLibrary();
-  }, 2000);
+  }
+  $('go').disabled = false;
+  setBadge(failed === jobs.length ? 'failed' : 'done',
+           jobs.length > 1 ? `${jobs.length - failed}/${jobs.length} jobs finished` : 'finished');
+}
+
+function pollOne(id, tag) {
+  return new Promise(resolve => {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      const r = await fetch('/api/jobs/' + id);
+      if (!r.ok) return;
+      const j = await r.json();
+      $('log').textContent = j.log.join('\n') || '...';
+      $('log').scrollTop = $('log').scrollHeight;
+      if (j.status === 'running' || j.status === 'queued') {
+        setBadge('running', tag + 'pipeline running -- transcription is the slow part');
+        return;
+      }
+      clearInterval(pollTimer);
+      resolve(j);
+    }, 2000);
+  });
 }
 
 function esc(s) {
@@ -336,6 +362,8 @@ function clipCard(c) {
       <video src="${c.url}" controls preload="metadata"></video>
       <div class="meta"><b>${c.clip}</b> &middot; ${dur} &middot; ${scoreLine}
         <div class="reason">${esc(c.reason)}</div></div>
+      ${c.thumbs ? `<div class="thumbs">${c.thumbs.map(u =>
+        `<a href="${u}" target="_blank" title="open cover frame"><img src="${u}"></a>`).join('')}</div>` : ''}
       <div class="actions">
         <a href="${c.url}" download>download</a>
         <button onclick="const s=$('${sid}');s.style.display=s.style.display==='block'?'none':'block'">script</button>

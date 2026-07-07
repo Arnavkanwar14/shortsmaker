@@ -38,6 +38,11 @@ class Config:
     content_type: str = "auto"      # auto | talk | action | funny
                                     # action: gaming/sports -- scores cut
                                     # density + loudness bursts over dialogue
+    focus: str = ""                 # optional: keywords or a description of
+                                    # the moments wanted ("boss fight",
+                                    # "funny fails", "when they talk pricing")
+    manual_clips: str = ""          # optional: explicit spans, skips auto
+                                    # detection: "12:30-13:10, 745-790"
 
     # ---- LLM (script + optional highlight ranking) ----
     llm_provider: str = "auto"      # auto | ollama | groq | gemini | none

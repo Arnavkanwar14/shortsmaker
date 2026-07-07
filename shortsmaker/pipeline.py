@@ -31,6 +31,26 @@ def source_caption_words(transcript: dict, clip: dict) -> list[dict]:
     return words
 
 
+def parse_manual_clips(spec: str) -> list[tuple[float, float]]:
+    """'12:30-13:10, 745-790.5, 1:02:03-1:02:50' -> [(start_s, end_s)]."""
+    def ts(s: str) -> float:
+        parts = [float(p) for p in s.strip().split(":")]
+        return sum(p * 60 ** i for i, p in enumerate(reversed(parts)))
+
+    spans = []
+    for chunk in spec.split(","):
+        if "-" not in chunk:
+            continue
+        a, _, b = chunk.partition("-")
+        try:
+            s, e = ts(a), ts(b)
+        except ValueError:
+            continue
+        if e > s:
+            spans.append((round(s, 2), round(e, 2)))
+    return spans
+
+
 def derive_run_id(input_str: str) -> str:
     stem = Path(input_str).stem if not input_str.startswith("http") else input_str
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", stem).strip("-").lower()[:40] or "run"
@@ -59,16 +79,32 @@ def run(cfg: Config) -> dict:
     if cfg.clean:
         video = cleanup.run(cfg, video)
 
-    clips = highlights.run(cfg, video, transcript)
-    ledger.add("highlights", src_minutes)
+    if cfg.manual_clips:
+        spans = parse_manual_clips(cfg.manual_clips)
+        if not spans:
+            raise ValueError(f"could not parse manual clips: {cfg.manual_clips!r} "
+                             "(expected e.g. '12:30-13:10, 745-790')")
+        clips = []
+        for s, e in spans:
+            text, _, _ = highlights._window_texts(transcript["segments"], s, e)
+            clips.append({"start": s, "end": e, "score": 1.0, "signals": {},
+                          "text": text, "reason": "manual selection"})
+        log.info("manual clips: %d spans, auto-detection skipped", len(clips))
+    else:
+        clips = highlights.run(cfg, video, transcript)
+        ledger.add("highlights", src_minutes)
 
     # ---- stages 4-6 (per clip, failure-isolated) ----
     manifest_clips = []
     for idx, clip in enumerate(clips, 1):
-        clip_dir = run_dir / "clips" / f"clip_{idx:02d}"
+        # manual spans get their own span-named dirs so they never collide
+        # with (or wrongly reuse) a previous auto run's cached clip outputs
+        name = (f"manual_{int(clip['start'])}-{int(clip['end'])}"
+                if cfg.manual_clips else f"clip_{idx:02d}")
+        clip_dir = run_dir / "clips" / name
         clip_dir.mkdir(parents=True, exist_ok=True)
         entry = {
-            "clip": f"clip_{idx:02d}",
+            "clip": name,
             "start": clip["start"], "end": clip["end"],
             "duration": round(clip["end"] - clip["start"], 1),
             "score": clip["score"], "reason": clip["reason"],
@@ -107,6 +143,7 @@ def run(cfg: Config) -> dict:
                                  caption_words, keeps)
             ledger.add("assemble", 1)
             entry["file"] = str(final.relative_to(run_dir))
+            entry["thumbs"] = assemble.thumbnails(final, clip_dir)
         except Exception as e:
             log.error("clip %02d FAILED: %s", idx, e)
             log.debug(traceback.format_exc())
