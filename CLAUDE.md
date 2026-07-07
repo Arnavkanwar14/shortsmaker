@@ -21,6 +21,9 @@ Keep LLM usage at ~1 call per run for highlights + 1 per clip for scripts.
 Never add per-candidate or retry-loop LLM calls — free tier.
 
 ## Gotchas (all discovered the hard way)
+- HF serverless Inference API no longer hosts TTS (routes to PAID partner
+  providers) -- abandoned in favor of Kokoro-82M running locally via the
+  `kokoro` package. Don't re-attempt the API route.
 - GPU whisper works on this machine via pip `nvidia-cublas-cu12` +
   `nvidia-cudnn-cu12` (no CUDA Toolkit needed), but the DLL dirs must be
   prepended to PATH -- `transcribe._register_cuda_dlls()` does it.
