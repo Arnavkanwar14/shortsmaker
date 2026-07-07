@@ -350,6 +350,24 @@ function showTab(name) {
   if (name === 'library') loadLibrary();
 }
 
+// This page only works served by the shortsmaker server (relative /api/...
+// fetches need a real http:// origin to resolve against). Opening this
+// index.html file directly from disk (file://) breaks every API call with
+// a cryptic "Failed to parse URL" error -- catch it here with a clear one.
+if (location.protocol === 'file:') {
+  document.querySelector('.wrap').innerHTML = `
+    <div class="card" style="max-width:520px;margin:60px auto;text-align:center">
+      <div style="font-weight:600;font-size:15px;margin-bottom:8px">This page needs the shortsmaker server running</div>
+      <div style="font-size:13px;color:var(--mid);line-height:1.6">
+        You opened this file directly from disk. Double-click
+        <b>start-shortsmaker.bat</b> in the shortsmaker folder instead --
+        it starts the server and opens this page at the right address
+        (<code>http://127.0.0.1:8000</code>).
+      </div>
+    </div>`;
+  throw new Error("stop: served over file:// protocol");
+}
+
 fetch('/api/voices').then(r => r.json()).then(vs => {
   $('voice').innerHTML = vs.map(v => `<option>${v}</option>`).join('');
 });
