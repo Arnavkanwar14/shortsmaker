@@ -110,6 +110,7 @@ def run(cfg: Config) -> dict:
             "score": clip["score"], "reason": clip["reason"],
             "signals": clip.get("signals", {}),
             "virality": clip.get("virality"),
+            "metadata": clip.get("metadata"),
             "status": "ok",
         }
         try:
@@ -144,6 +145,12 @@ def run(cfg: Config) -> dict:
             ledger.add("assemble", 1)
             entry["file"] = str(final.relative_to(run_dir))
             entry["thumbs"] = assemble.thumbnails(final, clip_dir)
+            if entry["metadata"]:
+                m = entry["metadata"]
+                (clip_dir / "metadata.txt").write_text(
+                    f"{m['title']}\n\n{m['description']}\n\n"
+                    + " ".join(f"#{t}" for t in m["hashtags"]),
+                    encoding="utf-8")
         except Exception as e:
             log.error("clip %02d FAILED: %s", idx, e)
             log.debug(traceback.format_exc())

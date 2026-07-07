@@ -281,12 +281,17 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         f"Grade EACH candidate as a standalone viral short ({CONTENT_HINTS[profile]}). "
         "Score 0-99 on: hook (do the first seconds grab attention?), "
         "flow (complete thought, no mid-idea chop?), value (takeaway, emotion, "
-        "or aha-moment?), and overall viral score. "
+        "or aha-moment?), and overall viral score. Also write a short catchy "
+        "title (under 60 chars), a one-sentence description, and 4-6 relevant "
+        "hashtags (no # symbol, no spaces) for each candidate. "
         "You may also add up to 2 NEW windows the list missed, using "
         f'{cfg.min_duration}-{cfg.max_duration}s spans. Respond with ONLY a JSON array: '
         '[{"id": 0, "hook": 70, "flow": 80, "value": 60, "viral": 71, '
-        '"reason": "one line"}, {"id": "new", "start": 120.0, "end": 165.0, '
-        '"viral": 75, "reason": "one line"}]'
+        '"reason": "one line", "title": "short catchy title", '
+        '"description": "one sentence", "hashtags": ["tag1", "tag2"]}, '
+        '{"id": "new", "start": 120.0, "end": 165.0, "viral": 75, '
+        '"reason": "one line", "title": "...", "description": "...", '
+        '"hashtags": ["..."]}]'
     )
     reply = llm.complete(cfg, prompt, max_tokens=1500,
                          system="You are a short-form video editor who predicts "
@@ -296,6 +301,16 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
     if not grades:
         log.info("LLM virality pass unavailable/unparseable; using heuristics only")
         return candidates
+
+    def meta(g: dict) -> dict:
+        tags = g.get("hashtags") or []
+        if not isinstance(tags, list):
+            tags = []
+        return {
+            "title": str(g.get("title", ""))[:80],
+            "description": str(g.get("description", ""))[:280],
+            "hashtags": [str(t).lstrip("#").replace(" ", "") for t in tags[:6] if t],
+        }
 
     graded = [dict(c) for c in top]
     added = 0
@@ -315,6 +330,7 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                     "score": round(0.9 * viral / 99, 4), "signals": {},
                     "text": text, "reason": f"LLM found: {g.get('reason', '')}",
                     "virality": {"viral": viral, "reason": g.get("reason", "")},
+                    "metadata": meta(g),
                 })
                 added += 1
                 continue
@@ -327,6 +343,7 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
             "value": int(g.get("value", 0)), "viral": viral,
             "reason": g.get("reason", ""),
         }
+        c["metadata"] = meta(g)
         # blend: heuristics know the audio/editing, the LLM knows the content
         c["score"] = round(0.5 * c["score"] + 0.5 * viral / 99, 4)
         c["reason"] = f"viral {viral}: {g.get('reason', '')}"

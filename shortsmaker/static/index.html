@@ -6,189 +6,280 @@
 <title>shortsmaker</title>
 <style>
   :root {
-    --bg: #0e0f13; --panel: #181a21; --panel2: #1f222c; --text: #e8eaf0;
-    --muted: #9aa0ae; --accent: #00d4ff; --accent2: #ffd400; --err: #ff5470;
-    --ok: #3ddc84; --radius: 14px;
+    --canvas: #f5f5f5; --paper: #ffffff; --surface-alt: #fafafa;
+    --ink: #0a0a0a; --ink-soft: #171717; --mid: #737373; --hairline: #e5e5e5;
+    --ember: #e7000b;
+    --shadow-card: 0 0 0 1px rgba(23,23,23,.05), 0 1px 3px rgba(0,0,0,.1),
+                   0 1px 2px -1px rgba(0,0,0,.1);
+    --r-card: 24px; --r-ctl: 18px; --r-nested: 10px; --r-sm: 6px;
+    --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif;
-         background: var(--bg); color: var(--text); min-height: 100vh; }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 26px 20px 80px; }
-  header { display: flex; align-items: baseline; gap: 24px; margin-bottom: 22px;
-           flex-wrap: wrap; }
-  h1 { font-size: 26px; margin: 0; }
-  h1 span { color: var(--accent); }
-  .sub { color: var(--muted); font-size: 13px; }
-  nav { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid #262a35; }
-  nav button { background: none; border: 0; color: var(--muted); font-size: 15px;
-    font-weight: 600; padding: 10px 18px; cursor: pointer; border-bottom: 2px solid
-    transparent; }
-  nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
-  nav button .count { background: #2c3140; border-radius: 99px; padding: 1px 8px;
-    font-size: 11px; margin-left: 6px; color: var(--text); }
+  body { margin: 0; font-family: var(--font); background: var(--canvas);
+         color: var(--ink); min-height: 100vh; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 90px; }
+
+  /* ---------------------------------------------------------- header */
+  header { display: flex; align-items: flex-end; justify-content: space-between;
+           gap: 24px; margin-bottom: 28px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .mark { width: 34px; height: 34px; border-radius: var(--r-nested); background: var(--ink);
+          display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .mark svg { width: 18px; height: 18px; stroke: var(--paper); }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -.02em; }
+  .sub { color: var(--mid); font-size: 13px; margin-top: 2px; }
+
+  /* --------------------------------------------------------------- nav */
+  nav { display: flex; gap: 4px; margin-bottom: 22px; background: var(--surface-alt);
+        border: 1px solid var(--hairline); border-radius: var(--r-ctl); padding: 4px;
+        width: fit-content; }
+  nav button { display: flex; align-items: center; gap: 6px; background: none; border: 0;
+    color: var(--mid); font-size: 13px; font-weight: 500; font-family: inherit;
+    padding: 7px 14px; cursor: pointer; border-radius: var(--r-nested);
+    transition: background .12s, color .12s; }
+  nav button.active { color: var(--ink); background: var(--paper); box-shadow: var(--shadow-card); }
+  nav button svg { width: 15px; height: 15px; }
+  nav button .count { background: var(--ink-soft); color: var(--paper); border-radius: 99px;
+    padding: 0 6px; font-size: 10.5px; font-weight: 600; min-width: 16px; text-align: center; }
   .tab { display: none; }
   .tab.active { display: block; }
-  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
-  @media (max-width: 880px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid #262a35;
-          border-radius: var(--radius); padding: 20px; }
-  label { display: block; font-size: 12px; color: var(--muted);
-          margin: 14px 0 5px; text-transform: uppercase; letter-spacing: .5px; }
-  label:first-child { margin-top: 0; }
-  input[type=text], select, input[type=number] {
-    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2c3140;
-    background: var(--panel2); color: var(--text); font-size: 14px; }
-  .hint { font-size: 11px; color: #6b7280; margin-top: 4px; line-height: 1.45; }
-  .drop { border: 2px dashed #333a4b; border-radius: 10px; padding: 20px;
-          text-align: center; color: var(--muted); cursor: pointer; font-size: 14px; }
-  .modes { display: flex; gap: 10px; }
-  .mode { flex: 1; border: 2px solid #2c3140; border-radius: 10px; padding: 12px;
-          cursor: pointer; background: var(--panel2); transition: border-color .15s; }
-  .mode:hover { border-color: #46506a; }
-  .mode.selected { border-color: var(--accent); background: #10202a; }
-  .mode b { display: block; font-size: 13px; margin-bottom: 5px; color: var(--text); }
-  .mode span { font-size: 11px; color: var(--muted); line-height: 1.45; }
-  .drop.hover, .drop:hover { border-color: var(--accent); }
-  .drop.hasfile { border-color: var(--ok); color: var(--ok); }
-  .row { display: flex; gap: 12px; }
+
+  /* -------------------------------------------------------------- grid */
+  .grid { display: grid; grid-template-columns: 400px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--paper); border: 1px solid var(--hairline);
+          border-radius: var(--r-card); box-shadow: var(--shadow-card); padding: 20px; }
+
+  /* ------------------------------------------------------------- form */
+  .section-label { font-size: 11px; color: var(--mid); font-weight: 500;
+    text-transform: uppercase; letter-spacing: .06em; margin: 20px 0 7px; }
+  .section-label:first-child { margin-top: 0; }
+  .row { display: flex; gap: 10px; }
   .row > div { flex: 1; }
-  button.go { width: 100%; margin-top: 20px; padding: 13px; font-size: 15px;
-    font-weight: 700; border: 0; border-radius: 10px; cursor: pointer;
-    background: linear-gradient(90deg, var(--accent), #7a5cff); color: #08090c; }
-  button.go:disabled { opacity: .45; cursor: not-allowed; }
-  .status { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .badge { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 99px; }
-  .badge.idle    { background: #2c3140; color: var(--muted); }
-  .badge.running { background: #103a4d; color: var(--accent); }
-  .badge.done    { background: #123726; color: var(--ok); }
-  .badge.failed  { background: #401622; color: var(--err); }
-  #log { background: #0a0b0e; border: 1px solid #262a35; border-radius: 10px;
-         padding: 12px; height: 240px; overflow-y: auto; font: 12px/1.55 Consolas,
-         monospace; color: #b6bcc9; white-space: pre-wrap; }
-  .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr));
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; padding: 9px 12px; border-radius: var(--r-ctl); border: none;
+    background: var(--canvas); color: var(--ink); font-size: 13.5px; font-family: inherit;
+    transition: box-shadow .12s; }
+  input:focus, select:focus, textarea:focus { outline: none;
+    box-shadow: 0 0 0 1px var(--hairline), 0 0 0 3px rgba(23,23,23,.06); }
+  textarea { resize: vertical; }
+  ::placeholder { color: var(--mid); }
+  .hint { font-size: 11.5px; color: var(--mid); margin-top: 6px; line-height: 1.5; }
+
+  .drop { border: 1.5px dashed var(--hairline); border-radius: var(--r-nested);
+          padding: 18px; text-align: center; color: var(--mid); cursor: pointer;
+          font-size: 13px; display: flex; align-items: center; justify-content: center;
+          gap: 8px; transition: border-color .12s, color .12s; }
+  .drop svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .drop:hover, .drop.hover { border-color: var(--ink); color: var(--ink); }
+  .drop.hasfile { border-color: var(--ink); color: var(--ink); border-style: solid; }
+
+  .modes { display: flex; gap: 8px; }
+  .mode { flex: 1; border: 1px solid var(--hairline); border-radius: var(--r-nested);
+          padding: 12px; cursor: pointer; background: var(--canvas);
+          transition: border-color .12s, background .12s; position: relative; }
+  .mode:hover { border-color: #c7c7c7; }
+  .mode.selected { border-color: var(--ink); background: var(--paper);
+    box-shadow: 0 0 0 1px var(--ink); }
+  .mode .mhead { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .mode svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .mode b { font-size: 12.5px; font-weight: 600; }
+  .mode span { font-size: 11px; color: var(--mid); line-height: 1.5; display: block; }
+
+  button.go { width: 100%; margin-top: 22px; padding: 11px; font-size: 14px;
+    font-weight: 500; font-family: inherit; border: none; border-radius: var(--r-ctl);
+    cursor: pointer; background: var(--ink); color: var(--surface-alt);
+    display: flex; align-items: center; justify-content: center; gap: 8px; }
+  button.go:hover:not(:disabled) { background: var(--ink-soft); }
+  button.go:disabled { opacity: .4; cursor: not-allowed; }
+  button.go svg { width: 15px; height: 15px; }
+
+  /* ------------------------------------------------------------ status */
+  .status { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .badge { font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: var(--r-ctl);
+           display: inline-flex; align-items: center; gap: 5px; }
+  .badge.idle    { background: var(--canvas); color: var(--mid); }
+  .badge.running { background: transparent; color: var(--ink); border: 1px solid var(--hairline); }
+  .badge.done    { background: var(--ink-soft); color: var(--paper); }
+  .badge.failed  { background: transparent; color: var(--ember); border: 1px solid #f7d1d1; }
+  #statusText { font-size: 12.5px; color: var(--mid); }
+
+  #log { background: var(--ink); border-radius: var(--r-nested); padding: 12px 14px;
+         height: 230px; overflow-y: auto; font: 12px/1.6 "Cascadia Code", Consolas, monospace;
+         color: #c9c9c9; white-space: pre-wrap; }
+  .cost { margin-top: 12px; font-size: 12.5px; color: var(--mid); padding: 9px 12px;
+          background: var(--canvas); border-radius: var(--r-nested); }
+
+  /* -------------------------------------------------------------- clips */
+  .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px,1fr));
            gap: 14px; margin-top: 16px; }
-  .clip { background: var(--panel2); border-radius: 12px; overflow: hidden;
-          border: 1px solid #2c3140; }
-  .clip video { width: 100%; aspect-ratio: 9/16; background: #000; display: block; }
-  .clip .meta { padding: 9px 11px; font-size: 12px; color: var(--muted); }
-  .clip .meta b { color: var(--text); }
-  .clip .reason { font-size: 11px; margin-top: 3px; color: #7c8496; }
-  .clip .actions { display: flex; border-top: 1px solid #2c3140; }
-  .clip .actions > * { flex: 1; text-align: center; padding: 8px 4px; font-size: 12px;
-    font-weight: 600; color: var(--accent); text-decoration: none; background: none;
-    border: 0; cursor: pointer; font-family: inherit; }
-  .clip .actions > * + * { border-left: 1px solid #2c3140; }
-  .thumbs { display: flex; gap: 4px; padding: 6px 8px 0; }
+  .clip { background: var(--paper); border: 1px solid var(--hairline);
+          border-radius: var(--r-nested); overflow: hidden; }
+  .clip video { width: 100%; aspect-ratio: 9/16; background: var(--ink); display: block; }
+  .clip .meta { padding: 10px 12px; font-size: 12px; color: var(--mid); }
+  .clip .meta b { color: var(--ink); font-weight: 600; }
+  .clip .reason { font-size: 11px; margin-top: 4px; color: #8b8b8b; line-height: 1.4; }
+  .clip .cliptitle { font-size: 12.5px; font-weight: 600; color: var(--ink); margin-top: 6px;
+                     line-height: 1.35; }
+  .clip .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .tag { font-size: 10px; padding: 1px 7px; border-radius: var(--r-ctl); background: var(--canvas);
+         color: var(--mid); }
+  .clip .actions { display: flex; border-top: 1px solid var(--hairline); }
+  .clip .actions > * { flex: 1; text-align: center; padding: 8px 4px; font-size: 11.5px;
+    font-weight: 500; color: var(--ink); text-decoration: none; background: none;
+    border: 0; cursor: pointer; font-family: inherit; display: flex; align-items: center;
+    justify-content: center; gap: 4px; }
+  .clip .actions > *:hover { background: var(--canvas); }
+  .clip .actions > * + * { border-left: 1px solid var(--hairline); }
+  .clip .actions svg { width: 13px; height: 13px; }
+  .thumbs { display: flex; gap: 4px; padding: 8px 8px 0; }
   .thumbs a { flex: 1; }
   .thumbs img { width: 100%; aspect-ratio: 9/16; object-fit: cover;
-                border-radius: 6px; display: block; opacity: .85; }
+                border-radius: var(--r-sm); display: block; opacity: .8; }
   .thumbs img:hover { opacity: 1; }
-  .script { display: none; padding: 10px 12px; font-size: 12px; line-height: 1.5;
-    color: #c8cdd8; border-top: 1px solid #2c3140; background: #171922; }
-  .cost { margin-top: 12px; font-size: 13px; color: var(--accent2); }
-  .runcard { margin-bottom: 22px; }
+  .panel { display: none; padding: 10px 12px; font-size: 12px; line-height: 1.6;
+    color: #444; border-top: 1px solid var(--hairline); background: var(--surface-alt); }
+  .panel .copy-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .panel .copy-row button { font-size: 11px; padding: 4px 10px; border-radius: var(--r-ctl);
+    background: var(--paper); border: 1px solid var(--hairline); cursor: pointer;
+    font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
+  .panel .copy-row button svg { width: 12px; height: 12px; }
+
+  .stat-row { display: flex; gap: 14px; align-items: baseline; }
+  .stat b { font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
+  .stat span { font-size: 10.5px; color: var(--mid); text-transform: uppercase;
+               letter-spacing: .04em; display: block; }
+
+  /* -------------------------------------------------------------- library */
+  .runcard { margin-bottom: 20px; }
   .runhead { display: flex; justify-content: space-between; align-items: flex-start;
     gap: 12px; flex-wrap: wrap; }
-  .runhead .title { font-weight: 700; font-size: 15px; word-break: break-all; }
-  .runhead .info { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .runhead .info a { color: var(--accent); text-decoration: none; }
-  .del { background: none; border: 1px solid #3a2030; color: var(--err);
-    border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .runhead .title { font-weight: 600; font-size: 14px; word-break: break-all; }
+  .runhead .info { color: var(--mid); font-size: 12px; margin-top: 4px; }
+  .del { background: none; border: 1px solid var(--hairline); color: var(--ember);
+    border-radius: var(--r-ctl); padding: 6px 12px; font-size: 12px; cursor: pointer;
+    font-family: inherit; display: flex; align-items: center; gap: 5px; }
+  .del:hover { background: #fff5f5; border-color: #f7d1d1; }
+  .del svg { width: 13px; height: 13px; }
   .toolbar { display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 16px; }
-  .toolbar .path { font: 12px Consolas, monospace; color: var(--muted); }
-  .refresh { background: var(--panel2); color: var(--text); border: 1px solid #2c3140;
-    border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
-  .empty { color: var(--muted); text-align: center; padding: 50px 0; font-size: 14px; }
-  .spinner { width: 14px; height: 14px; border: 2px solid #2c3140;
-    border-top-color: var(--accent); border-radius: 50%; display: inline-block;
-    animation: spin .8s linear infinite; }
+    margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+  .toolbar .path { font: 12px "Cascadia Code", Consolas, monospace; color: var(--mid); }
+  .refresh { background: var(--paper); color: var(--ink); border: 1px solid var(--hairline);
+    border-radius: var(--r-ctl); padding: 8px 14px; font-size: 12.5px; cursor: pointer;
+    font-family: inherit; display: flex; align-items: center; gap: 6px; }
+  .refresh:hover { background: var(--canvas); }
+  .refresh svg { width: 14px; height: 14px; }
+  .empty { color: var(--mid); text-align: center; padding: 60px 0; font-size: 13.5px; }
+
+  .spinner { width: 12px; height: 12px; border: 2px solid var(--hairline);
+    border-top-color: var(--ink); border-radius: 50%; display: inline-block;
+    animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>shorts<span>maker</span></h1>
-    <span class="sub">video in &rarr; vertical clips with AI voiceover + kinetic captions out &middot; 100% free stack</span>
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l10 8-10 8V4z"/></svg></div>
+      <div>
+        <h1>shortsmaker</h1>
+        <div class="sub">video in &rarr; vertical clips with AI voiceover + kinetic captions &middot; 100% free stack</div>
+      </div>
+    </div>
   </header>
 
   <nav>
-    <button id="tab-create" class="active" onclick="showTab('create')">Create</button>
-    <button id="tab-library" onclick="showTab('library')">Library<span class="count" id="libCount">&ndash;</span></button>
+    <button id="tab-create" class="active" onclick="showTab('create')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      Create
+    </button>
+    <button id="tab-library" onclick="showTab('library')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+      Library<span class="count" id="libCount">&ndash;</span>
+    </button>
   </nav>
 
   <!-- ============ CREATE ============ -->
   <div class="tab active" id="create">
     <div class="grid">
       <div class="card">
-        <label>Video URL(s) &mdash; one per line for a batch</label>
-        <textarea id="url" rows="2" placeholder="https://www.youtube.com/watch?v=..."
-          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2c3140;background:var(--panel2);color:var(--text);font-size:14px;font-family:inherit;resize:vertical"></textarea>
-        <label>&mdash; or upload a file &mdash;</label>
-        <div class="drop" id="drop">click or drop a video here</div>
+        <div class="section-label">Video url(s) &mdash; one per line for a batch</div>
+        <textarea id="url" rows="2" placeholder="https://www.youtube.com/watch?v=..."></textarea>
+
+        <div class="section-label">or upload a file</div>
+        <div class="drop" id="drop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <span id="dropLabel">click or drop a video here</span>
+        </div>
         <input type="file" id="file" accept="video/*" style="display:none">
 
-        <div class="row">
-          <div><label>Clips</label>
+        <div class="row" style="margin-top:16px">
+          <div><div class="section-label" style="margin-top:0">Clips</div>
             <input type="number" id="num_clips" min="1" max="10" value="3"></div>
-          <div><label>Target length (s)</label>
+          <div><div class="section-label" style="margin-top:0">Target length (s)</div>
             <input type="number" id="duration" min="20" max="90" value="45"></div>
         </div>
-        <label>Audio &amp; captions mode</label>
+
+        <div class="section-label">Audio &amp; captions mode</div>
         <div class="modes">
           <div class="mode selected" id="mode-caption" onclick="setMode(false)">
-            <b>&#127908; Video's own voice + captions</b>
-            <span>Original audio untouched. Every spoken word becomes an
-            animated caption, perfectly timed.</span>
+            <div class="mhead">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 15h3M7 11h10M13 15h4"/></svg>
+              <b>Video's own voice</b>
+            </div>
+            <span>Original audio untouched. Every spoken word becomes an animated caption, perfectly timed.</span>
           </div>
           <div class="mode" id="mode-vo" onclick="setMode(true)">
-            <b>&#129302; AI voiceover commentary</b>
-            <span>AI reads the context, writes a script, and narrates over
-            the clip. Captions follow the AI voice.</span>
+            <div class="mhead">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg>
+              <b>AI voiceover</b>
+            </div>
+            <span>AI reads the context, writes a script, and narrates over the clip. Captions follow the AI voice.</span>
           </div>
         </div>
         <div id="voSettings" style="display:none">
-          <label>Voice</label>
+          <div class="section-label">Voice</div>
           <select id="voice"></select>
-          <div class="row">
-            <div><label>Voiceover volume %</label>
+          <div class="row" style="margin-top:10px">
+            <div><div class="section-label" style="margin-top:0">Voiceover volume %</div>
               <input type="number" id="vo_volume" min="0" max="200" value="100"></div>
-            <div><label>Original audio %</label>
+            <div><div class="section-label" style="margin-top:0">Original audio %</div>
               <input type="number" id="bg_volume" min="0" max="200" value="18"></div>
           </div>
-          <div class="hint">The original audio is ducked (default 18%) so the
-            narration stays listenable &mdash; raise it if the source sound
-            matters, e.g. 40-60% for gameplay.</div>
+          <div class="hint">The original audio is ducked (default 18%) so the narration stays listenable &mdash; raise it if the source sound matters, e.g. 40-60% for gameplay.</div>
         </div>
-        <label>Find moments about (optional)</label>
-        <input type="text" id="focus"
-               placeholder="e.g. boss fight, funny fails, when they talk pricing">
-        <label>Manual clips (optional, skips auto-detection)</label>
+
+        <div class="section-label">Find moments about (optional)</div>
+        <input type="text" id="focus" placeholder="e.g. boss fight, funny fails, when they talk pricing">
+
+        <div class="section-label">Manual clips (optional, skips auto-detection)</div>
         <input type="text" id="manual_clips" placeholder="12:30-13:10, 45:02-45:50">
-        <div class="row">
-          <div><label>Content type</label>
+
+        <div class="row" style="margin-top:16px">
+          <div><div class="section-label" style="margin-top:0">Content type</div>
             <select id="content_type">
               <option value="auto" selected>auto-detect</option>
               <option value="talk">talking (podcast/vlog)</option>
               <option value="action">gaming / action / sports</option>
               <option value="funny">funny moments</option>
             </select></div>
-          <div><label>Snappy cut (dead air/ums)</label>
+          <div><div class="section-label" style="margin-top:0">Snappy cut (dead air/ums)</div>
             <select id="trim_silence">
               <option value="auto" selected>auto</option>
               <option value="on">on</option>
               <option value="off">off</option>
             </select></div>
         </div>
-        <div class="row">
-          <div><label>Captions</label>
+
+        <div class="row" style="margin-top:10px">
+          <div><div class="section-label" style="margin-top:0">Captions</div>
             <select id="style">
               <option value="kinetic">kinetic</option>
               <option value="plain">plain</option>
               <option value="none">none</option>
             </select></div>
-          <div><label>Whisper model</label>
+          <div><div class="section-label" style="margin-top:0">Whisper model</div>
             <select id="whisper_model">
               <option value="tiny">tiny (fastest)</option>
               <option value="base">base</option>
@@ -196,10 +287,9 @@
               <option value="medium">medium (slowest)</option>
             </select></div>
         </div>
-        <div class="hint">Whisper transcribes the source video's speech. Bigger =
-          more accurate transcript (better highlight picks + better AI scripts)
-          but slower on CPU. tiny &asymp; 8x faster than small.</div>
-        <label>Script LLM</label>
+        <div class="hint">Whisper transcribes the source video's speech. Bigger = more accurate transcript (better highlight picks + better AI scripts) but slower on CPU. tiny &asymp; 8x faster than small. GPU is used automatically when available.</div>
+
+        <div class="section-label">Script LLM</div>
         <select id="llm_provider">
           <option value="auto" selected>auto (ollama &rarr; groq &rarr; gemini)</option>
           <option value="ollama">ollama (local)</option>
@@ -207,16 +297,20 @@
           <option value="gemini">gemini (free API key)</option>
           <option value="none">none (template script)</option>
         </select>
-        <button class="go" id="go">Make shorts</button>
+
+        <button class="go" id="go">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+          Make shorts
+        </button>
       </div>
 
       <div class="card">
         <div class="status">
           <span class="badge idle" id="badge">idle</span>
-          <span id="statusText" style="font-size:13px;color:var(--muted)"></span>
+          <span id="statusText"></span>
         </div>
         <div id="log">waiting for a job...</div>
-        <div class="cost" id="cost"></div>
+        <div class="cost" id="cost" style="display:none"></div>
         <div class="clips" id="clips"></div>
       </div>
     </div>
@@ -226,7 +320,10 @@
   <div class="tab" id="library">
     <div class="toolbar">
       <span class="path">stored in shortsmaker\runs\&lt;run-id&gt;\clips\ &middot; source video kept alongside for fast re-runs</span>
-      <button class="refresh" onclick="loadLibrary()">&#8635; refresh</button>
+      <button class="refresh" onclick="loadLibrary()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5"/></svg>
+        refresh
+      </button>
     </div>
     <div id="runs"><div class="empty">loading...</div></div>
   </div>
@@ -235,6 +332,15 @@
 <script>
 const $ = id => document.getElementById(id);
 let pickedFile = null, pollTimer = null;
+
+const ICONS = {
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
+  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10 13 3H5a2 2 0 0 0-2 2v8l7 7 10-10z"/><circle cx="8" cy="8" r="1"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+};
 
 function showTab(name) {
   for (const t of ['create', 'library']) {
@@ -265,7 +371,7 @@ $('file').onchange = () => setFile($('file').files[0]);
 }));
 function setFile(f) {
   pickedFile = f || null;
-  $('drop').textContent = f ? f.name : 'click or drop a video here';
+  $('dropLabel').textContent = f ? f.name : 'click or drop a video here';
   $('drop').classList.toggle('hasfile', !!f);
 }
 
@@ -284,7 +390,7 @@ $('go').onclick = async () => {
   if (!$('url').value.trim() && !pickedFile) { alert('Give a URL or a file'); return; }
 
   $('go').disabled = true;
-  $('clips').innerHTML = ''; $('cost').textContent = '';
+  $('clips').innerHTML = ''; $('cost').style.display = 'none';
   setBadge('running', pickedFile ? 'uploading...' : 'starting...');
   try {
     const r = await fetch('/api/jobs', { method: 'POST', body: fd });
@@ -298,9 +404,9 @@ $('go').onclick = async () => {
 
 function setBadge(state, text) {
   $('badge').className = 'badge ' + state;
-  $('badge').textContent = state;
-  $('statusText').innerHTML = state === 'running'
-    ? `<span class="spinner"></span> ${text || ''}` : (text || '');
+  $('badge').innerHTML = state === 'running'
+    ? '<span class="spinner"></span>running' : state;
+  $('statusText').textContent = text || '';
 }
 
 async function pollQueue(jobs) {
@@ -311,8 +417,11 @@ async function pollQueue(jobs) {
     if (j.status === 'failed') failed++;
     if (j.clips) {
       $('clips').innerHTML = j.clips.map(clipCard).join('');
-      if (j.cost) $('cost').textContent =
-        `a credit-based SaaS would have charged ~${j.cost.total_credits_equivalent} credits for this run - you paid $0`;
+      if (j.cost) {
+        $('cost').style.display = 'block';
+        $('cost').textContent =
+          `a credit-based SaaS would have charged ~${j.cost.total_credits_equivalent} credits for this run -- you paid $0`;
+      }
     }
     loadLibrary();
   }
@@ -331,7 +440,7 @@ function pollOne(id, tag) {
       $('log').textContent = j.log.join('\n') || '...';
       $('log').scrollTop = $('log').scrollHeight;
       if (j.status === 'running' || j.status === 'queued') {
-        setBadge('running', tag + 'pipeline running -- transcription is the slow part');
+        setBadge('running', tag + 'transcription is usually the slow part');
         return;
       }
       clearInterval(pollTimer);
@@ -349,27 +458,56 @@ function clipCard(c) {
   if (c.status !== 'ok') return `
     <div class="clip"><div class="meta"><b>${c.clip}</b> failed
       <div class="reason">${esc(c.error)}</div></div></div>`;
-  const sid = 'sc_' + Math.random().toString(36).slice(2, 9);
+  const scriptId = 'sc_' + Math.random().toString(36).slice(2, 9);
+  const metaId = 'md_' + Math.random().toString(36).slice(2, 9);
   const v = c.virality;
+  const m = c.metadata;
   const scoreLine = v
-    ? `viral <b style="color:var(--accent2)">${v.viral}</b>` +
-      (v.hook != null ? ` &middot; hook ${v.hook} flow ${v.flow} value ${v.value}` : '')
-    : `score ${c.score}`;
+    ? `<div class="stat-row"><div class="stat"><b>${v.viral}</b><span>viral</span></div>` +
+      (v.hook != null ? `<div class="stat"><b>${v.hook}</b><span>hook</span></div>
+        <div class="stat"><b>${v.flow}</b><span>flow</span></div>
+        <div class="stat"><b>${v.value}</b><span>value</span></div>` : '') + `</div>`
+    : `<div class="reason">score ${c.score}</div>`;
   const dur = c.edited_duration
     ? `${c.edited_duration}s <s style="opacity:.5">${c.duration}s</s>` : `${c.duration}s`;
+  const metaCopy = m ? `${m.title}\n\n${m.description}\n\n${(m.hashtags||[]).map(t=>'#'+t).join(' ')}` : '';
   return `
     <div class="clip">
       <video src="${c.url}" controls preload="metadata"></video>
-      <div class="meta"><b>${c.clip}</b> &middot; ${dur} &middot; ${scoreLine}
-        <div class="reason">${esc(c.reason)}</div></div>
+      <div class="meta">
+        <b>${c.clip}</b> &middot; ${dur}
+        ${scoreLine}
+        ${m && m.title ? `<div class="cliptitle">${esc(m.title)}</div>` : ''}
+        ${m && m.hashtags && m.hashtags.length ? `<div class="tags">${m.hashtags.slice(0,4).map(t=>`<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}
+        <div class="reason">${esc(c.reason)}</div>
+      </div>
       ${c.thumbs ? `<div class="thumbs">${c.thumbs.map(u =>
         `<a href="${u}" target="_blank" title="open cover frame"><img src="${u}"></a>`).join('')}</div>` : ''}
       <div class="actions">
-        <a href="${c.url}" download>download</a>
-        <button onclick="const s=$('${sid}');s.style.display=s.style.display==='block'?'none':'block'">script</button>
+        <a href="${c.url}" download>${ICONS.download}download</a>
+        <button onclick="toggle('${scriptId}')">${ICONS.file}script</button>
+        ${m ? `<button onclick="toggle('${metaId}')">${ICONS.tag}title/tags</button>` : ''}
       </div>
-      <div class="script" id="${sid}">${esc(c.script)}</div>
+      <div class="panel" id="${scriptId}">${esc(c.script)}</div>
+      ${m ? `<div class="panel" id="${metaId}">
+        <b>${esc(m.title)}</b><br>${esc(m.description)}<br><br>
+        ${(m.hashtags||[]).map(t=>'#'+esc(t)).join(' ')}
+        <div class="copy-row"><button onclick="copyText(this, ${JSON.stringify(metaCopy)})">${ICONS.copy}copy</button></div>
+      </div>` : ''}
     </div>`;
+}
+
+function toggle(id) {
+  const el = $(id);
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+function copyText(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = ICONS.check + 'copied';
+    setTimeout(() => btn.innerHTML = orig, 1500);
+  });
 }
 
 async function loadLibrary() {
@@ -377,7 +515,7 @@ async function loadLibrary() {
     const runs = await (await fetch('/api/runs')).json();
     $('libCount').textContent = runs.length;
     if (!runs.length) {
-      $('runs').innerHTML = '<div class="empty">no runs yet - make some shorts!</div>';
+      $('runs').innerHTML = '<div class="empty">no runs yet -- make some shorts!</div>';
       return;
     }
     $('runs').innerHTML = runs.map(r => `
@@ -390,7 +528,7 @@ async function loadLibrary() {
               voice ${esc(r.settings.voice || '?')} &middot; llm ${esc(r.settings.llm_provider || '?')}
               ${r.cost ? `&middot; ~${r.cost} SaaS credits saved` : ''}</div>
           </div>
-          <button class="del" onclick="deleteRun('${r.run_id}')">delete run</button>
+          <button class="del" onclick="deleteRun('${r.run_id}')">${ICONS.trash}delete run</button>
         </div>
         <div class="clips">${r.clips.map(clipCard).join('')}</div>
       </div>`).join('');
