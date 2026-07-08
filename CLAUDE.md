@@ -20,6 +20,13 @@ stage writes to `runs/<run-id>/` and skips if its output exists.
 Keep LLM usage at ~1 call per run for highlights + 1 per clip for scripts.
 Never add per-candidate or retry-loop LLM calls — free tier.
 
+## YouTube upload (shortsmaker/youtube.py)
+Free YouTube Data API v3. Owner drops a "Desktop app" OAuth client JSON at
+project root as `youtube_client_secret.json` (gitignored); "Connect" runs
+`InstalledAppFlow.run_local_server` once, saving `youtube_token.json`.
+Upload ≈1600 quota units → ~6/day. Vertical + `#Shorts` in the description
+makes it register as a Short. Both json files are gitignored.
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the

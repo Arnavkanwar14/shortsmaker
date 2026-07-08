@@ -208,6 +208,59 @@ def delete_run(run_id: str):
     return {"deleted": run_id}
 
 
+@app.get("/api/youtube/status")
+def youtube_status():
+    from . import youtube
+    return {"configured": youtube.is_configured(),
+            "authorized": youtube.is_authorized()}
+
+
+@app.post("/api/youtube/connect")
+def youtube_connect():
+    """Runs the one-time OAuth consent flow (opens a browser on this
+    machine). Blocks until consent completes."""
+    from . import youtube
+    try:
+        youtube.connect()
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    return {"authorized": True}
+
+
+@app.post("/api/youtube/upload")
+def youtube_upload(run_id: str = Form(...), clip: str = Form(...),
+                   privacy: str = Form("private")):
+    import json
+
+    from . import youtube
+    if privacy not in ("private", "unlisted", "public"):
+        raise HTTPException(400, "privacy must be private, unlisted, or public")
+    run_dir = RUNS_DIR / run_id
+    mf = run_dir / "manifest.json"
+    if "/" in run_id or "\\" in run_id or not mf.is_file():
+        raise HTTPException(404, "unknown run")
+    manifest = json.loads(mf.read_text(encoding="utf-8"))
+    entry = next((c for c in manifest.get("clips", [])
+                  if c.get("clip") == clip and c.get("file")), None)
+    if not entry:
+        raise HTTPException(404, "unknown clip")
+    video = run_dir / entry["file"]
+    if not video.is_file():
+        raise HTTPException(404, "clip file missing")
+
+    run_title = ""
+    meta_file = run_dir / "meta.json"
+    if meta_file.is_file():
+        run_title = json.loads(meta_file.read_text(encoding="utf-8")).get("title", "")
+    title, desc, tags = youtube.build_description(
+        entry.get("metadata"), fallback_title=f"{run_title} {clip}".strip())
+    try:
+        url = youtube.upload(video, title, desc, tags, privacy=privacy)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    return {"url": url, "title": title}
+
+
 @app.get("/api/voices")
 def voices():
     # curated shortlist; full list via `python -m shortsmaker voices`.

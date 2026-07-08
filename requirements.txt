@@ -13,6 +13,10 @@ fastapi>=0.110
 uvicorn>=0.29
 python-multipart>=0.0.9   # file uploads
 
+# YouTube auto-upload (free YouTube Data API v3)
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+
 # Optional (graceful fallback if missing)
 mediapipe>=0.10.9         # Stage 6: face-aware cropping (falls back to center crop)
 
