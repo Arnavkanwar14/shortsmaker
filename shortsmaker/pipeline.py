@@ -100,7 +100,7 @@ def run(cfg: Config, progress=None) -> dict:
                           "text": text, "reason": "manual selection"})
         log.info("manual clips: %d spans, auto-detection skipped", len(clips))
     else:
-        clips = highlights.run(cfg, video, transcript)
+        clips = highlights.run(cfg, video, transcript, meta)
         ledger.add("highlights", src_minutes)
 
     # ---- stages 4-6 (per clip, failure-isolated) ----

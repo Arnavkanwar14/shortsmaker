@@ -254,10 +254,11 @@ CONTENT_HINTS = {
 
 
 def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
-                 duration: float, profile: str) -> list[dict]:
+                 duration: float, profile: str, meta: dict | None = None) -> list[dict]:
     """Grade the top candidates on an Opus-style rubric -- Hook / Flow /
     Value, 0-99 -- in ONE LLM call per run (free-tier friendly). The model
-    may also suggest up to 2 windows the heuristics missed."""
+    may also suggest up to 2 windows the heuristics missed, and writes
+    SEO-optimized YouTube Shorts upload metadata for each candidate."""
     ranked = sorted(candidates, key=lambda c: c["score"], reverse=True)
     top = ranked[:12]                            # cap prompt size and tokens
     rest = ranked[12:]
@@ -274,21 +275,33 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                   f"\"{cfg.focus}\". Grade segments matching that high and "
                   f"unrelated segments low, and prefer matching moments for "
                   f"any NEW windows you add.\n\n" if cfg.focus else "")
+    src_line = ""
+    if meta and meta.get("title"):
+        src_line = (f"Source video title: \"{meta['title']}\""
+                    + (f" (channel: {meta['uploader']})" if meta.get("uploader") else "")
+                    + " -- use its names/topic as the primary search keywords.\n")
     prompt = (
-        f"A {duration:.0f}-second video. Transcript (timestamped):\n"
+        f"A {duration:.0f}-second video. {src_line}Transcript (timestamped):\n"
         f"{transcript_block}\n\n"
         f"Candidate clips to grade:\n{listing}\n\n{focus_line}"
         f"Grade EACH candidate as a standalone viral short ({CONTENT_HINTS[profile]}). "
         "Score 0-99 on: hook (do the first seconds grab attention?), "
         "flow (complete thought, no mid-idea chop?), value (takeaway, emotion, "
-        "or aha-moment?), and overall viral score. Also write a short catchy "
-        "title (under 60 chars), a one-sentence description, and 4-6 relevant "
-        "hashtags (no # symbol, no spaces) for each candidate. "
+        "or aha-moment?), and overall viral score. "
+        "Also write SEO-optimized YouTube Shorts upload metadata per candidate: "
+        "title = under 70 chars, FRONT-LOAD the main search keyword (famous "
+        "name/topic people actually type), then a curiosity hook; truthful, "
+        "no emoji or quotes. description = 2-3 sentences; the FIRST sentence "
+        "must contain the main keyword naturally (only the first line shows "
+        "before the fold), name the people/topic, end with a question that "
+        "invites comments; no hashtags inside the text. hashtags = 4-6 "
+        "lowercase, most important first (YouTube surfaces only the first 3): "
+        "start with shorts, then the topic and any famous names. "
         "You may also add up to 2 NEW windows the list missed, using "
         f'{cfg.min_duration}-{cfg.max_duration}s spans. Respond with ONLY a JSON array: '
         '[{"id": 0, "hook": 70, "flow": 80, "value": 60, "viral": 71, '
-        '"reason": "one line", "title": "short catchy title", '
-        '"description": "one sentence", "hashtags": ["tag1", "tag2"]}, '
+        '"reason": "one line", "title": "...", "description": "...", '
+        '"hashtags": ["shorts", "tag2"]}, '
         '{"id": "new", "start": 120.0, "end": 165.0, "viral": 75, '
         '"reason": "one line", "title": "...", "description": "...", '
         '"hashtags": ["..."]}]'
@@ -307,8 +320,8 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         if not isinstance(tags, list):
             tags = []
         return {
-            "title": str(g.get("title", ""))[:80],
-            "description": str(g.get("description", ""))[:280],
+            "title": str(g.get("title", ""))[:100],
+            "description": str(g.get("description", ""))[:500],
             "hashtags": [str(t).lstrip("#").replace(" ", "") for t in tags[:6] if t],
         }
 
@@ -361,7 +374,8 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
 
 
 # ---------------------------------------------------------------- main
-def run(cfg: Config, video: Path, transcript: dict) -> list[dict]:
+def run(cfg: Config, video: Path, transcript: dict,
+        meta: dict | None = None) -> list[dict]:
     out = cfg.run_dir / "highlights.json"
     if out.exists() and not cfg.force:
         log.info("highlights: highlights.json exists, skipping")
@@ -400,7 +414,7 @@ def run(cfg: Config, video: Path, transcript: dict) -> list[dict]:
 
     scored = score_windows(windows, cuts, times, rms, cfg, profile)
     if cfg.use_llm_highlights:
-        scored = llm_virality(cfg, segments, scored, duration, profile)
+        scored = llm_virality(cfg, segments, scored, duration, profile, meta)
 
     picked = pick_non_overlapping(scored, cfg.num_clips)
     for w in picked:
