@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import logging
 import re
 import traceback
@@ -16,6 +17,25 @@ from .stages import assemble, cleanup, highlights, ingest, script_gen, transcrib
 from .util import CostLedger, media_duration, read_json, write_json
 
 log = logging.getLogger("shortsmaker")
+
+# Every setting that changes what a rendered clip looks/sounds like. The
+# per-clip stages (script/tts/assemble) each cache their output purely by
+# "does the file exist" -- with no awareness that these settings changed
+# since a previous run on the SAME url/run_id, they'd silently keep
+# serving a stale render (e.g. an old AI-voiceover clip after switching
+# to caption-the-original-voice mode). render_signature() gives each
+# clip a fingerprint of its settings so a change forces a fresh render.
+RENDER_SETTINGS_KEYS = [
+    "voiceover", "tts_engine", "voice", "kokoro_voice", "piper_model",
+    "vo_volume", "bg_audio_volume", "style", "caption_preset",
+    "caption_position", "reframe_style", "face_crop", "llm_provider",
+    "trim_silence", "silence_gap",
+]
+
+
+def render_signature(cfg: Config) -> str:
+    d = {k: getattr(cfg, k) for k in RENDER_SETTINGS_KEYS}
+    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def source_caption_words(transcript: dict, clip: dict) -> list[dict]:
@@ -123,6 +143,17 @@ def run(cfg: Config, progress=None) -> dict:
             "metadata": clip.get("metadata"),
             "status": "ok",
         }
+
+        # if voiceover/voice/caption/reframe settings changed since this
+        # clip was last rendered, its cached script/tts/assemble outputs
+        # are stale even though the files still exist -- force a redo for
+        # just this clip rather than silently serving the old render
+        sig = render_signature(cfg)
+        sig_file = clip_dir / "render_sig.txt"
+        stale = not sig_file.is_file() or sig_file.read_text(encoding="utf-8").strip() != sig
+        orig_force = cfg.force
+        if stale:
+            cfg.force = True
         try:
             # snappy-cut plan: trim dead air + filler words (from the source
             # speech word timestamps); shortens the effective clip length
@@ -164,11 +195,14 @@ def run(cfg: Config, progress=None) -> dict:
                     f"TITLE:\n{m['title']}\n\nDESCRIPTION:\n{m['description']}\n\n"
                     f"TAGS:\n{tags_line}\n",
                     encoding="utf-8")
+            sig_file.write_text(sig, encoding="utf-8")
         except Exception as e:
             log.error("clip %02d FAILED: %s", idx, e)
             log.debug(traceback.format_exc())
             entry["status"] = "failed"
             entry["error"] = str(e)
+        finally:
+            cfg.force = orig_force
         manifest_clips.append(entry)
 
     manifest = {
