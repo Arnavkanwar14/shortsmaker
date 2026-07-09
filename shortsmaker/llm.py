@@ -108,11 +108,21 @@ def _gemini(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
 
 
 def extract_json_array(text: str):
-    """Pull the first JSON array out of an LLM reply, tolerating prose/fences."""
+    """Pull the first JSON array out of an LLM reply, tolerating prose,
+    ```json fences, trailing commas, and literal newlines inside strings
+    (which strict json.loads rejects -- common when models write
+    multi-line descriptions)."""
+    if not text:
+        return None
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if not m:
         return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    blob = m.group(0)
+    # strict=False allows control chars (newlines/tabs) inside string values
+    for attempt in (blob, re.sub(r",\s*([\]}])", r"\1", blob)):
+        try:
+            return json.loads(attempt, strict=False)
+        except json.JSONDecodeError as e:
+            last = e
+    log.info("JSON parse failed: %s", last)
+    return None

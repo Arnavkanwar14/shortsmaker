@@ -157,9 +157,12 @@ def run(cfg: Config, progress=None) -> dict:
             entry["thumbs"] = assemble.thumbnails(final, clip_dir)
             if entry["metadata"]:
                 m = entry["metadata"]
+                # description already includes the hashtag block; add the
+                # separate YouTube keyword-tags line for copy/paste
+                tags_line = ", ".join(m.get("tags", []))
                 (clip_dir / "metadata.txt").write_text(
-                    f"{m['title']}\n\n{m['description']}\n\n"
-                    + " ".join(f"#{t}" for t in m["hashtags"]),
+                    f"TITLE:\n{m['title']}\n\nDESCRIPTION:\n{m['description']}\n\n"
+                    f"TAGS:\n{tags_line}\n",
                     encoding="utf-8")
         except Exception as e:
             log.error("clip %02d FAILED: %s", idx, e)

@@ -77,30 +77,29 @@ def connect() -> None:
 
 
 def build_description(metadata: dict | None, fallback_title: str) -> tuple[str, str, list[str]]:
-    """(title, description, tags) from clip metadata, YouTube-ready.
-    Guarantees the video registers as a Short via a #Shorts tag."""
+    """(title, description, tags) ready for the YouTube API.
+
+    The metadata's `description` is already the complete text (hook, story,
+    related line, CTA, hashtag block from highlights.finalize_metadata), so
+    this mostly enforces YouTube's limits and guarantees a shorts tag."""
     md = metadata or {}
     title = (md.get("title") or fallback_title or "Short clip")[:TITLE_MAX]
 
-    tags = [t.lstrip("#") for t in (md.get("hashtags") or []) if t]
+    # prefer the dedicated keyword tags; fall back to the hashtags
+    tags = [t.lstrip("#") for t in (md.get("tags") or md.get("hashtags") or []) if t]
     if not any(t.lower() == "shorts" for t in tags):
         tags.insert(0, "shorts")
-    # keep tags under YouTube's ~500-char total budget
     trimmed, total = [], 0
-    for t in tags:
-        if total + len(t) + 2 > TAGS_CHARS_MAX:
+    for t in tags:                       # YouTube's ~500-char tag budget
+        if len(trimmed) >= 15 or total + len(t) + 2 > TAGS_CHARS_MAX:
             break
         trimmed.append(t)
         total += len(t) + 2
 
-    desc = md.get("description") or title
-    hashtag_line = " ".join(f"#{t}" for t in trimmed)
-    # guarantee a #shorts tag in the description (that's what flags a Short),
-    # but don't duplicate it -- "shorts" is already forced to the front of tags
-    if "#shorts" not in (desc + hashtag_line).lower():
-        hashtag_line = ("#Shorts " + hashtag_line).strip()
-    description = f"{desc}\n\n{hashtag_line}".strip()[:DESC_MAX]
-    return title, description, trimmed
+    description = (md.get("description") or title)
+    if "#shorts" not in description.lower():
+        description = f"{description}\n\n#Shorts".strip()
+    return title, description[:DESC_MAX], trimmed
 
 
 def upload(video_path: Path, title: str, description: str, tags: list[str],

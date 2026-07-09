@@ -138,3 +138,19 @@ def gemini_api_key() -> str:
 
 def hf_token() -> str:
     return os.environ.get("HF_TOKEN", "") or os.environ.get("HUGGINGFACE_TOKEN", "")
+
+
+def load_channel() -> dict:
+    """Optional per-channel metadata constants from channel.json in the
+    project root. Generalizes the branded/fixed parts of upload metadata
+    (subscribe CTA, always-include tags, fixed hashtags) so the SEO rules
+    aren't hardcoded to any one channel. Empty dict = pure generic SEO.
+    Recognized keys: name, cta, tags (list), hashtags (list)."""
+    path = Path(__file__).resolve().parent.parent / "channel.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}

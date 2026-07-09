@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import llm
-from ..config import Config
+from ..config import Config, load_channel
 from ..util import read_json, write_json
 
 log = logging.getLogger("shortsmaker")
@@ -253,15 +253,93 @@ CONTENT_HINTS = {
 }
 
 
+def _as_list(v) -> list[str]:
+    """Groq sometimes returns a requested JSON array as a comma-separated
+    string instead -- iterating a raw string yields one entry per
+    character, so coerce explicitly rather than trusting the type."""
+    if isinstance(v, list):
+        return [str(x) for x in v if x]
+    if isinstance(v, str):
+        return [s.strip() for s in v.split(",") if s.strip()]
+    return []
+
+
+def _dedupe_cap(items: list[str], max_n: int, max_chars: int) -> list[str]:
+    """Order-preserving dedupe (case-insensitive), capped by count and by
+    total comma-joined length (YouTube's tag budget)."""
+    out, seen, total = [], set(), 0
+    for it in items:
+        it = it.strip()
+        key = it.lower()
+        if not it or key in seen:
+            continue
+        if len(out) >= max_n or total + len(it) + 2 > max_chars:
+            break
+        out.append(it)
+        seen.add(key)
+        total += len(it) + 2
+    return out
+
+
+def finalize_metadata(g: dict, channel: dict) -> dict:
+    """Turn one LLM grade into upload-ready metadata, applying universal SEO
+    rules plus the optional channel profile.
+
+    Returns {title, description, hashtags, tags}. The description is the full
+    text to paste into YouTube (hook + story + related-searches + CTA +
+    hashtag line); hashtags/tags are also returned separately for the API.
+    """
+    title = str(g.get("title", "")).strip().lstrip("#")[:100]
+    body = str(g.get("description", "")).strip()
+    related = str(g.get("related", "")).strip()
+
+    # hashtags: channel-fixed (branded consistency) override the LLM's;
+    # otherwise the LLM's 3-tier set. Always <=5, always includes a shorts
+    # tag so the upload registers as a Short.
+    if channel.get("hashtags"):
+        hashtags = [str(h).lstrip("#").replace(" ", "") for h in channel["hashtags"] if h]
+    else:
+        hashtags = [t.lstrip("#").replace(" ", "") for t in _as_list(g.get("hashtags"))]
+    hashtags = hashtags[:5]
+    if not any(h.lower() == "shorts" for h in hashtags):
+        hashtags = (["Shorts"] + hashtags)[:5]
+
+    # tags: always-include channel tags first (consistency), then the LLM's
+    # subject-specific tags; deduped, <=15 and <500 chars (YouTube limits).
+    fixed = [str(t) for t in (channel.get("tags") or [])]
+    subj = [t.lower() for t in _as_list(g.get("tags"))]
+    tags = _dedupe_cap(fixed + subj, 15, 480)
+
+    # assemble the full description deterministically so the rules (CTA,
+    # related line, hashtag block) are guaranteed, not left to the model.
+    cta = channel.get("cta") or (
+        f"Subscribe to {channel['name']} for more." if channel.get("name")
+        else "Subscribe for more.")
+    parts = [body]
+    if related:
+        parts.append("Related searches: " + related)
+    parts.append(cta)
+    if hashtags:
+        parts.append(" ".join("#" + h for h in hashtags))
+    description = "\n\n".join(p for p in parts if p)[:1200]
+
+    return {"title": title, "description": description,
+            "hashtags": hashtags, "tags": tags}
+
+
 def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                  duration: float, profile: str, meta: dict | None = None) -> list[dict]:
     """Grade the top candidates on an Opus-style rubric -- Hook / Flow /
     Value, 0-99 -- in ONE LLM call per run (free-tier friendly). The model
     may also suggest up to 2 windows the heuristics missed, and writes
     SEO-optimized YouTube Shorts upload metadata for each candidate."""
+    # full upload metadata per candidate is token-heavy, so grade fewer:
+    # ~2x the requested clip count is plenty to pick from without blowing
+    # the single-call output budget (risk R3 in PLAN.md)
+    n_grade = min(max(cfg.num_clips * 2, 6), 10)
     ranked = sorted(candidates, key=lambda c: c["score"], reverse=True)
-    top = ranked[:12]                            # cap prompt size and tokens
-    rest = ranked[12:]
+    top = ranked[:n_grade]
+    rest = ranked[n_grade:]
 
     lines = [f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segments]
     transcript_block = "\n".join(lines) or "(almost no speech in this video)"
@@ -287,43 +365,48 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         f"Grade EACH candidate as a standalone viral short ({CONTENT_HINTS[profile]}). "
         "Score 0-99 on: hook (do the first seconds grab attention?), "
         "flow (complete thought, no mid-idea chop?), value (takeaway, emotion, "
-        "or aha-moment?), and overall viral score. "
-        "Also write SEO-optimized YouTube Shorts upload metadata per candidate: "
-        "title = under 70 chars, FRONT-LOAD the main search keyword (famous "
-        "name/topic people actually type), then a curiosity hook; truthful, "
-        "no emoji or quotes. description = 2-3 sentences; the FIRST sentence "
-        "must contain the main keyword naturally (only the first line shows "
-        "before the fold), name the people/topic, end with a question that "
-        "invites comments; no hashtags inside the text. hashtags = 4-6 "
-        "lowercase, most important first (YouTube surfaces only the first 3): "
-        "start with shorts, then the topic and any famous names. "
+        "or aha-moment?), and overall viral score.\n"
+        "Also write upload metadata per candidate:\n"
+        "- title: <=70 chars, NO hashtags, NO emoji, NO quotes. Front-load the "
+        "main subject/keyword people would search, then open a curiosity gap "
+        "and do NOT reveal the payoff (make them click to find out). Use an "
+        "impossible-sounding statement, an incomplete reveal, a direct 'you', "
+        "or an irony/contradiction.\n"
+        "- description: a hook line matching the title's energy, then tell it "
+        "in order -- setup, then the key fact, then the twist. Name the "
+        "subject in the first sentence (SEO). No hashtags and no call-to-"
+        "action in the text (both are added automatically).\n"
+        "- related: 4-6 comma-separated search phrases people type to find this.\n"
+        "- hashtags: exactly 5, no # symbol, ordered specific->niche->broad "
+        "(main subject, then subject+facts/lore, then niche, then broad like "
+        "shorts/viral/fyp).\n"
+        "- tags: 6-10 lowercase keyword tags, subject-specific first.\n"
         "You may also add up to 2 NEW windows the list missed, using "
         f'{cfg.min_duration}-{cfg.max_duration}s spans. Respond with ONLY a JSON array: '
         '[{"id": 0, "hook": 70, "flow": 80, "value": 60, "viral": 71, '
         '"reason": "one line", "title": "...", "description": "...", '
-        '"hashtags": ["shorts", "tag2"]}, '
+        '"related": "phrase a, phrase b", "hashtags": ["subject", "..."], '
+        '"tags": ["subject", "..."]}, '
         '{"id": "new", "start": 120.0, "end": 165.0, "viral": 75, '
         '"reason": "one line", "title": "...", "description": "...", '
-        '"hashtags": ["..."]}]'
+        '"related": "...", "hashtags": ["..."], "tags": ["..."]}]'
     )
-    reply = llm.complete(cfg, prompt, max_tokens=1500,
+    reply = llm.complete(cfg, prompt, max_tokens=4000,
                          system="You are a short-form video editor who predicts "
                                 "which clips go viral. You are strict: most "
                                 "clips score under 60.")
     grades = llm.extract_json_array(reply)
     if not grades:
-        log.info("LLM virality pass unavailable/unparseable; using heuristics only")
+        log.info("LLM virality pass unavailable/unparseable (%d chars); "
+                 "using heuristics only", len(reply or ""))
         return candidates
 
+    channel = load_channel()      # per-channel branded/fixed constants
+    if channel:
+        log.info("metadata: applying channel profile %r", channel.get("name", "?"))
+
     def meta(g: dict) -> dict:
-        tags = g.get("hashtags") or []
-        if not isinstance(tags, list):
-            tags = []
-        return {
-            "title": str(g.get("title", ""))[:100],
-            "description": str(g.get("description", ""))[:500],
-            "hashtags": [str(t).lstrip("#").replace(" ", "") for t in tags[:6] if t],
-        }
+        return finalize_metadata(g, channel)
 
     graded = [dict(c) for c in top]
     added = 0

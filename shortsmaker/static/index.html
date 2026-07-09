@@ -643,7 +643,7 @@ function clipCard(c, runId) {
     : `<div class="reason">score ${c.score}</div>`;
   const dur = c.edited_duration
     ? `${c.edited_duration}s <s style="opacity:.5">${c.duration}s</s>` : `${c.duration}s`;
-  const metaCopy = m ? `${m.title}\n\n${m.description}\n\n${(m.hashtags||[]).map(t=>'#'+t).join(' ')}` : '';
+  const metaCopy = m ? `${m.title}\n\n${m.description}\n\nTAGS: ${(m.tags||[]).join(', ')}` : '';
   return `
     <div class="clip">
       <video src="${c.url}" controls preload="metadata"></video>
@@ -665,9 +665,10 @@ function clipCard(c, runId) {
       </div>
       <div class="panel" id="${scriptId}">${esc(c.script)}</div>
       ${m ? `<div class="panel" id="${metaId}">
-        <b>${esc(m.title)}</b><br>${esc(m.description)}<br><br>
-        ${(m.hashtags||[]).map(t=>'#'+esc(t)).join(' ')}
-        <div class="copy-row"><button onclick="copyText(this, ${JSON.stringify(metaCopy)})">${ICONS.copy}copy</button></div>
+        <b>${esc(m.title)}</b>
+        <div style="white-space:pre-wrap;margin-top:6px">${esc(m.description)}</div>
+        ${m.tags && m.tags.length ? `<div style="margin-top:8px;color:var(--mid)">tags: ${esc(m.tags.join(', '))}</div>` : ''}
+        <div class="copy-row"><button onclick="copyText(this, ${JSON.stringify(metaCopy)})">${ICONS.copy}copy all</button></div>
       </div>` : ''}
       <div class="panel" id="${ytId}" data-run="${runId || ''}" data-clip="${c.clip}"></div>
     </div>`;

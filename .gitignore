@@ -8,3 +8,4 @@ web.log
 web.err.log
 youtube_client_secret.json
 youtube_token.json
+channel.json

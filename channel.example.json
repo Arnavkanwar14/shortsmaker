@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy this file to channel.json to apply your channel's branded metadata to every clip. All keys are optional. Delete channel.json to go back to generic SEO. The universal rules (curiosity title, hook-first story description, related-searches line, 3-tier hashtags) always apply; this file only fixes the branded/consistent parts. Example below is a Pokemon lore channel.",
+  "name": "Pokemon Field Reports",
+  "cta": "Subscribe to Pokemon Field Reports for daily Pokemon lore.",
+  "tags": [
+    "pokemon", "pokemon lore", "pokemon facts", "pokemon shorts",
+    "professor oak", "pokedex explained", "viral shorts", "shorts",
+    "pokemon field reports", "did you know", "for you"
+  ],
+  "hashtags": ["Shorts", "Pokemon", "PokemonFacts", "PokemonLore", "PokemonFieldReports"]
+}
