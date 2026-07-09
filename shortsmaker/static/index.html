@@ -366,6 +366,11 @@
               <option value="center">center</option>
             </select></div>
         </div>
+        <div class="section-label">Reframe style</div>
+        <select id="reframe_style">
+          <option value="tight" selected>tight &mdash; full-bleed crop (most zoomed)</option>
+          <option value="balanced">balanced &mdash; less zoom, blurred top/bottom fill</option>
+        </select>
         <div class="hint">Whisper transcribes the source video's speech. Bigger = more accurate transcript (better highlight picks + better AI scripts) but slower on CPU. tiny &asymp; 8x faster than small. GPU is used automatically when available.</div>
 
         <div class="section-label">Script LLM</div>
@@ -497,7 +502,7 @@ function toast(msg) {
 // remember the user's settings between visits
 const SAVED_FIELDS = ['num_clips','duration','voice','style','llm_provider',
   'whisper_model','content_type','trim_silence','caption_preset',
-  'caption_position','tts_engine','kokoro_voice'];
+  'caption_position','tts_engine','kokoro_voice','reframe_style'];
 function saveSettings() {
   const s = Object.fromEntries(SAVED_FIELDS.map(k => [k, $(k).value]));
   s._voMode = voMode;
@@ -550,7 +555,7 @@ $('go').onclick = async () => {
   for (const k of ['num_clips','duration','voice','style','llm_provider',
                    'whisper_model','content_type','trim_silence',
                    'focus','manual_clips','caption_preset','caption_position',
-                   'tts_engine','kokoro_voice'])
+                   'tts_engine','kokoro_voice','reframe_style'])
     fd.append(k, $(k).value);
   fd.append('voiceover', voMode ? 'true' : 'false');
   fd.append('vo_volume', $('vo_volume').value / 100);

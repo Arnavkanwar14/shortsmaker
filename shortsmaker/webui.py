@@ -91,6 +91,7 @@ async def create_job(
     caption_position: str = Form("lower"),
     tts_engine: str = Form("edge"),
     kokoro_voice: str = Form("af_heart"),
+    reframe_style: str = Form("tight"),
 ):
     # batch mode: one job per URL line; upload = single job
     urls = [u.strip() for u in url.splitlines() if u.strip()]
@@ -120,7 +121,8 @@ async def create_job(
                      focus=focus.strip(), manual_clips=manual_clips.strip(),
                      caption_preset=caption_preset,
                      caption_position=caption_position,
-                     tts_engine=tts_engine, kokoro_voice=kokoro_voice)
+                     tts_engine=tts_engine, kokoro_voice=kokoro_voice,
+                     reframe_style=reframe_style)
         cfg.min_duration = max(duration - 15, 15)
         cfg.max_duration = duration + 15
         cfg.run_id = derive_run_id(cfg.input)

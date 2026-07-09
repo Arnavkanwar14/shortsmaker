@@ -52,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["bold", "beast", "minimal", "karaoke"])
     r.add_argument("--caption-position", dest="caption_position",
                    choices=["lower", "center"])
+    r.add_argument("--reframe-style", dest="reframe_style",
+                   choices=["tight", "balanced"],
+                   help="tight = full-bleed crop (default); balanced = wider, "
+                        "less-zoomed crop with blurred top/bottom fill")
     r.add_argument("--kokoro-voice", dest="kokoro_voice",
                    help="local Kokoro voice, e.g. af_heart, am_michael")
     r.add_argument("--clean", type=lambda s: s.lower() in ("1", "true", "yes"),

@@ -80,6 +80,8 @@ class Config:
                                     # (ducked to 0.18 under a voiceover,
                                     #  full 1.0 when voiceover is off)
     face_crop: bool = True          # mediapipe face-aware crop, else center
+    reframe_style: str = "tight"    # tight | balanced (less zoom, blurred
+                                    # top/bottom fill -- see assemble.crop_filter)
 
     # ---- cleanup (stage 7) ----
     clean: bool = False             # inpaint burned-in captions/watermarks

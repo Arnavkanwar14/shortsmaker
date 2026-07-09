@@ -43,10 +43,9 @@ _MP = None       # (mediapipe module, detector) | False when unavailable
 _HAAR = None     # cv2.CascadeClassifier | False when unavailable
 
 
-def _detect_cx(frame) -> float | None:
-    """Normalized face-center x (0..1) in one frame. Largest face = the
-    shot's subject (active-speaker detection would need audio-visual sync;
-    prominence is a good proxy). mediapipe first, haar fallback."""
+def _detect_faces(frame) -> list[float]:
+    """All normalized face-center x positions (0..1) in one frame, largest
+    first. mediapipe first, haar fallback."""
     global _MP, _HAAR
     import cv2
     if _MP is None:
@@ -67,11 +66,10 @@ def _detect_cx(frame) -> float | None:
         img = mp.Image(image_format=mp.ImageFormat.SRGB,
                        data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         res = det.detect(img)
-        if res.detections:
-            box = max((d.bounding_box for d in res.detections),
-                      key=lambda b: b.width * b.height)
-            return (box.origin_x + box.width / 2) / frame.shape[1]
-        return None
+        boxes = sorted(res.detections,
+                       key=lambda d: -(d.bounding_box.width * d.bounding_box.height))
+        return [(b.bounding_box.origin_x + b.bounding_box.width / 2) / frame.shape[1]
+                for b in boxes]
     if _HAAR is None:
         try:
             xml = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
@@ -84,10 +82,22 @@ def _detect_cx(frame) -> float | None:
     if _HAAR:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = _HAAR.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
-        if len(faces):
-            x, _, fw, _ = max(faces, key=lambda f: f[2] * f[3])
-            return (x + fw / 2) / frame.shape[1]
-    return None
+        faces = sorted(faces, key=lambda f: -(f[2] * f[3]))
+        return [(x + fw / 2) / frame.shape[1] for x, _, fw, _ in faces]
+    return []
+
+
+def choose_center(faces: list[float], prev: float) -> float | None:
+    """Pick which face to frame on. A single face is unambiguous; with
+    several, prefer whichever is closest to the PREVIOUS chosen position
+    (temporal continuity) instead of always the largest -- in a two-person
+    shot, "largest" flips between people as their relative size shifts,
+    which made the crop settle on the average of both instead of either."""
+    if not faces:
+        return None
+    if len(faces) == 1:
+        return faces[0]
+    return min(faces, key=lambda f: abs(f - prev))
 
 
 def shot_bounds(cuts: list[float], start: float, end: float,
@@ -104,14 +114,34 @@ def shot_bounds(cuts: list[float], start: float, end: float,
     return list(zip(bounds, bounds[1:]))
 
 
+SUBSHOT_SPAN = 3.0   # re-detect at least this often WITHIN a shot, so a pan
+                     # or a subject walking is tracked even without a cut
+
+
+def sub_windows(s0: float, s1: float, span: float = SUBSHOT_SPAN) -> list[tuple[float, float]]:
+    """Subdivide a shot into <=span-second windows for re-detection."""
+    out, t = [], s0
+    while t < s1:
+        t_end = min(t + span, s1)
+        out.append((round(t, 2), round(t_end, 2)))
+        t = t_end
+    return out
+
+
+def _sample_fracs(span: float) -> tuple[float, ...]:
+    if span < 2:
+        return (0.5,)
+    if span < 4:
+        return (0.3, 0.7)
+    return (0.2, 0.5, 0.8)
+
+
 def shot_crop_keyframes(video: Path, start: float, end: float,
                         cuts: list[float]) -> list[tuple[float, float]]:
-    """One crop position per SHOT, snapping exactly at scene cuts.
-
-    Within a shot the subject barely moves, so 2-3 detections + median is
-    enough; between shots the framing jumps like a real edit would. This
-    replaced per-second sampling with hold/glide, which was slower (30+
-    detections per clip) and lagged 1-2s behind every camera cut."""
+    """Crop position keyframes: snap exactly at scene cuts, and re-detect
+    every SUBSHOT_SPAN seconds within a shot so movement inside a single
+    continuous take (no cut) still gets followed instead of frozen at the
+    shot's start position."""
     import cv2
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
@@ -119,23 +149,24 @@ def shot_crop_keyframes(video: Path, start: float, end: float,
     prev = 0.5
     try:
         for s0, s1 in shot_bounds(cuts, start, end):
-            span = s1 - s0
-            fracs = (0.3, 0.7) if span < 6 else (0.2, 0.5, 0.8)
-            centers = []
-            for f in fracs:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int((start + s0 + span * f) * fps))
-                ok, frame = cap.read()
-                if not ok:
-                    continue
-                cx = _detect_cx(frame)
-                if cx is not None:
-                    centers.append(cx)
-            cx = sorted(centers)[len(centers) // 2] if centers else prev
-            # ignore sub-5% shifts: re-framing for nothing looks like jitter
-            if kfs and abs(cx - kfs[-1][1]) < 0.05:
-                continue
-            kfs.append((s0, round(cx, 4)))
-            prev = cx
+            for sub0, sub1 in sub_windows(s0, s1):
+                span = sub1 - sub0
+                centers = []
+                for f in _sample_fracs(span):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int((start + sub0 + span * f) * fps))
+                    ok, frame = cap.read()
+                    if not ok:
+                        continue
+                    faces = _detect_faces(frame)
+                    cx = choose_center(faces, prev)
+                    if cx is not None:
+                        centers.append(cx)
+                cx = sorted(centers)[len(centers) // 2] if centers else prev
+                # ignore sub-5% shifts: re-framing for nothing looks like jitter
+                if not kfs or abs(cx - kfs[-1][1]) >= 0.05:
+                    kfs.append((sub0, round(cx, 4)))
+                prev = cx     # update every window: prev drives face
+                              # disambiguation, not just the jitter gate
     finally:
         cap.release()
     return kfs
@@ -193,17 +224,40 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
                     remapped.append((rt, cx))
             kfs = remapped
 
+    # "balanced" crops a wider (less zoomed) slice and fills the remaining
+    # top/bottom sliver with a blurred copy of the same frame, instead of
+    # blowing the exact-fill crop up to fill the whole 1080x1920 frame --
+    # "tight" is a straight full-bleed crop with no padding (the original
+    # behavior, and default). Clamped to the source width.
+    balanced = cfg.reframe_style == "balanced"
+    active_w = min(w, int(crop_w * 1.35)) // 2 * 2 if balanced else crop_w
+
     if len(kfs) >= 2:
-        x_part = f"x='{_crop_x_step_expr(kfs, crop_w, w)}':y=0"
-        log.info("shot-snapped speaker crop: %d shots", len(kfs))
+        x_part = f"x='{_crop_x_step_expr(kfs, active_w, w)}'"
+        log.info("shot-snapped speaker crop: %d keyframes", len(kfs))
     else:
         cx = kfs[0][1] if kfs else 0.5
         if kfs:
             log.info("face-aware crop (static): center x = %.2f", cx)
-        x = max(0, min(int(cx * w - crop_w / 2), w - crop_w))
-        x_part = f"x={x}:y=0"
-    return (f"crop=w={crop_w}:h={h}:{x_part},"
-            f"scale={cfg.out_width}:{cfg.out_height},setsar=1")
+        x = max(0, min(int(cx * w - active_w / 2), w - active_w))
+        x_part = f"x={x}"
+
+    if not balanced:
+        return (f"crop=w={crop_w}:h={h}:{x_part}:y=0,"
+                f"scale={cfg.out_width}:{cfg.out_height},setsar=1")
+
+    # multi-chain graph: split into a blurred full-frame background and a
+    # less-tightly-cropped foreground, then composite. Valid to splice in
+    # here because the caller appends ",ass=...[v]" onto whatever this
+    # returns -- overlay is the last (unlabeled) filterchain, so the comma
+    # continuation and final [v] label land correctly either way.
+    return (
+        f"split=2[bg0][fg0];"
+        f"[bg0]scale={cfg.out_width}:{cfg.out_height}:force_original_aspect_ratio=increase,"
+        f"crop={cfg.out_width}:{cfg.out_height},gblur=sigma=20[bg];"
+        f"[fg0]crop=w={active_w}:h={h}:{x_part}:y=0,scale={cfg.out_width}:-2,setsar=1[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
+    )
 
 
 # ----------------------------------------------------------------- main
