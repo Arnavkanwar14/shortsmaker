@@ -1,6 +1,8 @@
 """STAGE 1 -- INGEST: accept a file or URL, produce normalized.mp4."""
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -10,6 +12,16 @@ from ..config import Config
 from ..util import ffmpeg_location_for_ytdlp, ffprobe_video, run_ffmpeg, write_json
 
 log = logging.getLogger("shortsmaker")
+
+# Same pattern as highlights_signature/render_signature: normalized.mp4 was
+# cached purely by "does the file exist", so changing max_height or
+# target_fps on a URL you'd already run silently kept the old normalization.
+INGEST_SETTINGS_KEYS = ["max_height", "target_fps"]
+
+
+def ingest_signature(cfg: Config) -> str:
+    d = {k: getattr(cfg, k) for k in INGEST_SETTINGS_KEYS}
+    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def is_url(s: str) -> bool:
@@ -55,9 +67,14 @@ def run(cfg: Config) -> Path:
     run_dir = cfg.run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     normalized = run_dir / "normalized.mp4"
-    if normalized.exists() and not cfg.force:
+    sig = ingest_signature(cfg)
+    sig_file = run_dir / "ingest_sig.txt"
+    stale = not sig_file.is_file() or sig_file.read_text(encoding="utf-8").strip() != sig
+    if normalized.exists() and not cfg.force and not stale:
         log.info("ingest: %s exists, skipping (use --force to redo)", normalized.name)
         return normalized
+    if stale and normalized.exists() and not cfg.force:
+        log.info("ingest: max_height/target_fps changed -- re-normalizing")
 
     if is_url(cfg.input):
         source = download(cfg.input, run_dir, cfg.max_height)
@@ -86,6 +103,7 @@ def run(cfg: Config) -> Path:
         log.info("source already compliant -- remuxing without re-encode")
         run_ffmpeg(["-i", str(source), "-c", "copy",
                     "-movflags", "+faststart", str(normalized)])
+        sig_file.write_text(sig, encoding="utf-8")
         return normalized
 
     vf = []
@@ -101,4 +119,5 @@ def run(cfg: Config) -> Path:
              str(normalized)]
     log.info("normalizing to %d fps mp4 ...", cfg.target_fps)
     run_ffmpeg(args)
+    sig_file.write_text(sig, encoding="utf-8")
     return normalized

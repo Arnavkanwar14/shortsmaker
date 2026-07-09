@@ -114,7 +114,7 @@ def shot_bounds(cuts: list[float], start: float, end: float,
     return list(zip(bounds, bounds[1:]))
 
 
-SUBSHOT_SPAN = 3.0   # re-detect at least this often WITHIN a shot, so a pan
+SUBSHOT_SPAN = 2.0   # re-detect at least this often WITHIN a shot, so a pan
                      # or a subject walking is tracked even without a cut
 
 
@@ -137,18 +137,21 @@ def _sample_fracs(span: float) -> tuple[float, ...]:
 
 
 def shot_crop_keyframes(video: Path, start: float, end: float,
-                        cuts: list[float]) -> list[tuple[float, float]]:
-    """Crop position keyframes: snap exactly at scene cuts, and re-detect
-    every SUBSHOT_SPAN seconds within a shot so movement inside a single
-    continuous take (no cut) still gets followed instead of frozen at the
-    shot's start position."""
+                        cuts: list[float]) -> list[tuple[float, float, bool]]:
+    """Crop position keyframes [(t, cx, is_cut)]: is_cut marks a keyframe
+    that starts a new SHOT (a real scene cut) vs one that's a re-detection
+    within the same continuous take. Re-detects every SUBSHOT_SPAN seconds
+    within a shot so movement inside a take is tracked instead of frozen
+    at the shot's start position; is_cut lets the caller snap instantly at
+    real cuts but glide smoothly between re-detections in the same shot."""
     import cv2
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    kfs: list[tuple[float, float]] = []
+    kfs: list[tuple[float, float, bool]] = []
     prev = 0.5
     try:
         for s0, s1 in shot_bounds(cuts, start, end):
+            first_in_shot = True
             for sub0, sub1 in sub_windows(s0, s1):
                 span = sub1 - sub0
                 centers = []
@@ -164,7 +167,8 @@ def shot_crop_keyframes(video: Path, start: float, end: float,
                 cx = sorted(centers)[len(centers) // 2] if centers else prev
                 # ignore sub-5% shifts: re-framing for nothing looks like jitter
                 if not kfs or abs(cx - kfs[-1][1]) >= 0.05:
-                    kfs.append((sub0, round(cx, 4)))
+                    kfs.append((sub0, round(cx, 4), first_in_shot))
+                    first_in_shot = False
                 prev = cx     # update every window: prev drives face
                               # disambiguation, not just the jitter gate
     finally:
@@ -172,25 +176,32 @@ def shot_crop_keyframes(video: Path, start: float, end: float,
     return kfs
 
 
-def _crop_x_step_expr(kfs: list[tuple[float, float]], crop_w: int, w: int) -> str:
-    """Piecewise-CONSTANT ffmpeg x expression: the crop snaps at shot cuts.
-    (Gliding across a hard cut reads as a pan glitch, so no interpolation.)
-    gte*lt bounds never double-count; result snapped to even pixels."""
+def _crop_x_mixed_expr(kfs: list[tuple[float, float, bool]], crop_w: int, w: int) -> str:
+    """Piecewise ffmpeg x expression: HARD SNAP at real scene cuts (gliding
+    across a genuine edit reads as a pan glitch) but smooth GLIDE between
+    re-detections within the same continuous shot (natural camera-follow
+    instead of an instant jump mid-take, which could leave the subject
+    out of frame for the remainder of a long take). gte/lt bounds never
+    double-count; result snapped to even pixels."""
     def px(cx: float) -> int:
         return max(0, min(int(cx * w - crop_w / 2), w - crop_w))
 
-    pts = [(t, px(cx)) for t, cx in kfs]
+    pts = [(t, px(cx), is_cut) for t, cx, is_cut in kfs]
     if len(pts) == 1:
         return str(pts[0][1])
-    terms = []
-    for i, (t, x) in enumerate(pts):
-        if i == 0:
-            cond = f"lt(t,{pts[1][0]})"
-        elif i == len(pts) - 1:
-            cond = f"gte(t,{t})"
+
+    terms = [f"lt(t,{pts[0][0]})*{pts[0][1]}"]
+    for i in range(len(pts) - 1):
+        t0, x0, _ = pts[i]
+        t1, x1, is_cut1 = pts[i + 1]
+        if t1 <= t0:
+            continue
+        cond = f"gte(t,{t0})*lt(t,{t1})"
+        if is_cut1:
+            terms.append(f"{cond}*{x0}")          # hold, then hard-snap at the cut
         else:
-            cond = f"gte(t,{t})*lt(t,{pts[i + 1][0]})"
-        terms.append(f"{cond}*{x}")
+            terms.append(f"{cond}*({x0}+({x1}-{x0})*(t-{t0})/({t1}-{t0}))")  # glide
+    terms.append(f"gte(t,{pts[-1][0]})*{pts[-1][1]}")
     return f"trunc(({'+'.join(terms)})/2)*2"
 
 
@@ -205,7 +216,7 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
                 f"pad={cfg.out_width}:{cfg.out_height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
 
     crop_w = int(h * target_ar) // 2 * 2                # even width
-    kfs: list[tuple[float, float]] = []
+    kfs: list[tuple[float, float, bool]] = []
     if cfg.face_crop:
         from ..util import read_json
         scenes_file = cfg.run_dir / "scenes.json"
@@ -218,10 +229,10 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
             # crop time runs on the post-jump-cut timeline
             from ..edits import remap_time
             remapped = []
-            for t, cx in kfs:
+            for t, cx, is_cut in kfs:
                 rt = remap_time(t, keeps)
                 if not remapped or rt > remapped[-1][0]:
-                    remapped.append((rt, cx))
+                    remapped.append((rt, cx, is_cut))
             kfs = remapped
 
     # "balanced" crops a wider (less zoomed) slice and fills the remaining
@@ -233,8 +244,9 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
     active_w = min(w, int(crop_w * 1.35)) // 2 * 2 if balanced else crop_w
 
     if len(kfs) >= 2:
-        x_part = f"x='{_crop_x_step_expr(kfs, active_w, w)}'"
-        log.info("shot-snapped speaker crop: %d keyframes", len(kfs))
+        x_part = f"x='{_crop_x_mixed_expr(kfs, active_w, w)}'"
+        log.info("speaker crop: %d keyframes (glide within shots, snap at cuts)",
+                 len(kfs))
     else:
         cx = kfs[0][1] if kfs else 0.5
         if kfs:

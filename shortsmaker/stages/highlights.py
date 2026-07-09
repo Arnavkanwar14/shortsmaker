@@ -355,8 +355,28 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
     # the single-call output budget (risk R3 in PLAN.md)
     n_grade = min(max(cfg.num_clips * 2, 6), 10)
     ranked = sorted(candidates, key=lambda c: c["score"], reverse=True)
+
+    focus_matches: list[dict] = []
+    if cfg.focus:
+        # a literal focus match (e.g. "boss fights") can score low on the
+        # heuristics (audio energy, cut density...), which never involve
+        # topic -- without this, it might never reach the LLM to be graded
+        # at all. Guarantee real keyword hits are in the pool it sees.
+        by_focus = sorted(candidates, key=lambda c: focus_score(c["text"], cfg.focus),
+                          reverse=True)
+        focus_matches = [c for c in by_focus if focus_score(c["text"], cfg.focus) > 0][:6]
+        seen, merged = set(), []
+        for c in focus_matches + ranked:
+            key = (c["start"], c["end"])
+            if key not in seen:
+                seen.add(key)
+                merged.append(c)
+        ranked = merged
+        n_grade = min(n_grade + len(focus_matches), 14)
+
     top = ranked[:n_grade]
     rest = ranked[n_grade:]
+    new_window_cap = 4 if cfg.focus else 2
 
     lines = [f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segments]
     transcript_block = "\n".join(lines) or "(almost no speech in this video)"
@@ -366,10 +386,15 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         f'{i}: [{c["start"]:.0f}s-{c["end"]:.0f}s] "{(c["text"] or "(no speech)")[:280]}"'
         for i, c in enumerate(top))
 
-    focus_line = (f"IMPORTANT: the user specifically wants clips about: "
-                  f"\"{cfg.focus}\". Grade segments matching that high and "
-                  f"unrelated segments low, and prefer matching moments for "
-                  f"any NEW windows you add.\n\n" if cfg.focus else "")
+    focus_line = (
+        f"HARD CONSTRAINT, not a preference: the user wants clips "
+        f"specifically about \"{cfg.focus}\". Any candidate that is NOT "
+        f"genuinely about \"{cfg.focus}\" must be scored viral <=30 no "
+        f"matter how engaging it otherwise looks -- only clips actually "
+        f"showing/discussing \"{cfg.focus}\" may score above 50. Any NEW "
+        f"windows you add must be moments matching \"{cfg.focus}\" the "
+        f"heuristics missed.\n\n"
+    ) if cfg.focus else ""
     src_line = ""
     if meta and meta.get("title"):
         src_line = (f"Source video title: \"{meta['title']}\""
@@ -398,7 +423,7 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         "(main subject, then subject+facts/lore, then niche, then broad like "
         "shorts/viral/fyp).\n"
         "- tags: 6-10 lowercase keyword tags, subject-specific first.\n"
-        "You may also add up to 2 NEW windows the list missed, using "
+        f"You may also add up to {new_window_cap} NEW windows the list missed, using "
         f'{cfg.min_duration}-{cfg.max_duration}s spans. Respond with ONLY a JSON array: '
         '[{"id": 0, "hook": 70, "flow": 80, "value": 60, "viral": 71, '
         '"reason": "one line", "title": "...", "description": "...", '
@@ -408,7 +433,7 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         '"reason": "one line", "title": "...", "description": "...", '
         '"related": "...", "hashtags": ["..."], "tags": ["..."]}]'
     )
-    reply = llm.complete(cfg, prompt, max_tokens=4000,
+    reply = llm.complete(cfg, prompt, max_tokens=4000 + 400 * len(focus_matches),
                          system="You are a short-form video editor who predicts "
                                 "which clips go viral. You are strict: most "
                                 "clips score under 60.")
@@ -434,7 +459,7 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                 ps = max(0.0, min(ps, duration - cfg.min_duration))
                 pe = min(max(pe, ps + cfg.min_duration),
                          min(ps + cfg.max_duration, duration))
-                if pe - ps < cfg.min_duration * 0.8 or added >= 2:
+                if pe - ps < cfg.min_duration * 0.8 or added >= new_window_cap:
                     continue
                 text, _, _ = _window_texts(segments, ps, pe)
                 viral = int(g.get("viral", 60))

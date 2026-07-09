@@ -5,6 +5,8 @@ Output: transcript.json
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from pathlib import Path
@@ -13,6 +15,17 @@ from ..config import Config
 from ..util import extract_wav, read_json, write_json
 
 log = logging.getLogger("shortsmaker")
+
+# Same pattern as highlights/ingest/render signatures: transcript.json was
+# cached purely by "does the file exist", so switching whisper_model (e.g.
+# tiny -> small for a better transcript) on an already-run URL silently
+# kept the old, lower-quality transcript forever.
+TRANSCRIBE_SETTINGS_KEYS = ["whisper_model", "whisper_device", "whisper_compute"]
+
+
+def transcribe_signature(cfg: Config) -> str:
+    d = {k: getattr(cfg, k) for k in TRANSCRIBE_SETTINGS_KEYS}
+    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def _register_cuda_dlls() -> None:
@@ -42,9 +55,14 @@ def _register_cuda_dlls() -> None:
 
 def run(cfg: Config, video: Path) -> dict:
     out = cfg.run_dir / "transcript.json"
-    if out.exists() and not cfg.force:
+    sig = transcribe_signature(cfg)
+    sig_file = cfg.run_dir / "transcribe_sig.txt"
+    stale = not sig_file.is_file() or sig_file.read_text(encoding="utf-8").strip() != sig
+    if out.exists() and not cfg.force and not stale:
         log.info("transcribe: transcript.json exists, skipping")
         return read_json(out)
+    if stale and out.exists() and not cfg.force:
+        log.info("transcribe: whisper model/device settings changed -- re-transcribing")
 
     _register_cuda_dlls()
     from faster_whisper import WhisperModel
@@ -107,6 +125,7 @@ def run(cfg: Config, video: Path) -> dict:
     segments = _sentence_segments(segments)
     transcript = {"language": info.language, "segments": segments}
     write_json(out, transcript)
+    sig_file.write_text(sig, encoding="utf-8")
     log.info("transcribed %d segments (language=%s)", len(segments), info.language)
     return transcript
 
