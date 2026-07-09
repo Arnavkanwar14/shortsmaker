@@ -147,8 +147,12 @@ def run(cfg: Config, progress=None) -> dict:
         # if voiceover/voice/caption/reframe settings changed since this
         # clip was last rendered, its cached script/tts/assemble outputs
         # are stale even though the files still exist -- force a redo for
-        # just this clip rather than silently serving the old render
-        sig = render_signature(cfg)
+        # just this clip rather than silently serving the old render.
+        # Also fold in the clip's own start/end: clip_01 is an index, not a
+        # content identity, so if a highlight-selection change (e.g. --focus)
+        # picks different footage for the same index, that must invalidate
+        # the cache too even though none of the render SETTINGS changed.
+        sig = render_signature(cfg) + f"|{clip['start']:.2f}-{clip['end']:.2f}"
         sig_file = clip_dir / "render_sig.txt"
         stale = not sig_file.is_file() or sig_file.read_text(encoding="utf-8").strip() != sig
         orig_force = cfg.force

@@ -12,6 +12,8 @@ Output: highlights.json -- ranked [{start, end, score, reason, signals}]
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from pathlib import Path
@@ -23,6 +25,21 @@ from ..config import Config, load_channel
 from ..util import read_json, write_json
 
 log = logging.getLogger("shortsmaker")
+
+# Settings that change which moments get picked. highlights.json used to be
+# cached purely by "does the file exist", so changing --focus (or
+# content_type, num_clips, duration...) and re-running the same video
+# silently kept the OLD clip selection -- this fingerprints the inputs that
+# actually affect selection so a change forces a fresh pick.
+HIGHLIGHTS_SETTINGS_KEYS = [
+    "focus", "content_type", "num_clips", "min_duration", "max_duration",
+    "llm_provider", "use_llm_highlights", "scene_threshold",
+]
+
+
+def highlights_signature(cfg: Config) -> str:
+    d = {k: getattr(cfg, k) for k in HIGHLIGHTS_SETTINGS_KEYS}
+    return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:16]
 
 SUPERLATIVES = re.compile(
     r"\b(best|worst|most|least|biggest|smallest|craziest|insane|amazing|"
@@ -460,9 +477,15 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
 def run(cfg: Config, video: Path, transcript: dict,
         meta: dict | None = None) -> list[dict]:
     out = cfg.run_dir / "highlights.json"
-    if out.exists() and not cfg.force:
+    sig = highlights_signature(cfg)
+    sig_file = cfg.run_dir / "highlights_sig.txt"
+    stale = not sig_file.is_file() or sig_file.read_text(encoding="utf-8").strip() != sig
+    if out.exists() and not cfg.force and not stale:
         log.info("highlights: highlights.json exists, skipping")
         return read_json(out)
+    if stale and out.exists() and not cfg.force:
+        log.info("highlights: focus/content-type/clip-count settings changed "
+                 "-- recomputing instead of reusing the old selection")
 
     segments = [s for s in transcript["segments"] if s["text"].strip()]
 
@@ -504,4 +527,5 @@ def run(cfg: Config, video: Path, transcript: dict,
         log.info("pick %.1f-%.1fs score=%.2f (%s)", w["start"], w["end"],
                  w["score"], w["reason"][:60])
     write_json(out, picked)
+    sig_file.write_text(sig, encoding="utf-8")
     return picked
