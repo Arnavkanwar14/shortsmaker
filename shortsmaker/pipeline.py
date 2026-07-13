@@ -141,6 +141,7 @@ def run(cfg: Config, progress=None) -> dict:
             "signals": clip.get("signals", {}),
             "virality": clip.get("virality"),
             "metadata": clip.get("metadata"),
+            "focus_matched": clip.get("focus_matched"),
             "status": "ok",
         }
 

@@ -125,6 +125,11 @@
   .clip .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .tag { font-size: 10px; padding: 1px 7px; border-radius: var(--r-ctl); background: var(--canvas);
          color: var(--mid); }
+  .focus-tag { display: flex; align-items: center; gap: 4px; font-size: 10.5px;
+               margin-top: 6px; }
+  .focus-tag svg { width: 11px; height: 11px; }
+  .focus-tag.focus-yes { color: var(--ink); font-weight: 500; }
+  .focus-tag.focus-no { color: var(--ember); }
   .clip .actions { display: flex; border-top: 1px solid var(--hairline); }
   .clip .actions > * { flex: 1; text-align: center; padding: 8px 4px; font-size: 11.5px;
     font-weight: 500; color: var(--ink); text-decoration: none; background: none;
@@ -317,6 +322,7 @@
 
         <div class="section-label">Find moments about (optional)</div>
         <input type="text" id="focus" placeholder="e.g. boss fight, funny fails, when they talk pricing">
+        <div class="hint">Searches the whole video for genuine matches (a hard filter, not a nudge) -- clips are flagged if no strong match was found instead of silently substituting something else.</div>
 
         <div class="section-label">Manual clips (optional, skips auto-detection)</div>
         <input type="text" id="manual_clips" placeholder="12:30-13:10, 45:02-45:50">
@@ -657,6 +663,8 @@ function clipCard(c, runId) {
         ${scoreLine}
         ${m && m.title ? `<div class="cliptitle">${esc(m.title)}</div>` : ''}
         ${m && m.hashtags && m.hashtags.length ? `<div class="tags">${m.hashtags.slice(0,4).map(t=>`<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}
+        ${c.focus_matched === true ? `<div class="focus-tag focus-yes">${ICONS.check} matches your search</div>` : ''}
+        ${c.focus_matched === false ? `<div class="focus-tag focus-no">no strong match found -- best available pick</div>` : ''}
         <div class="reason">${esc(c.reason)}</div>
       </div>
       ${c.thumbs ? `<div class="thumbs-label">cover options</div>

@@ -87,16 +87,19 @@ def _detect_faces(frame) -> list[float]:
     return []
 
 
-def choose_center(faces: list[float], prev: float) -> float | None:
-    """Pick which face to frame on. A single face is unambiguous; with
-    several, prefer whichever is closest to the PREVIOUS chosen position
-    (temporal continuity) instead of always the largest -- in a two-person
-    shot, "largest" flips between people as their relative size shifts,
-    which made the crop settle on the average of both instead of either."""
+def choose_center(faces: list[float], prev: float, prefer_largest: bool = False) -> float | None:
+    """Pick which face to frame on. A single face is unambiguous. With
+    several: prefer_largest=True picks the largest (used at the START of
+    a brand-new shot, where `prev` is a leftover position from a
+    completely different scene and isn't a meaningful predictor of who
+    the new shot's subject is). Otherwise prefer whichever is closest to
+    the PREVIOUS chosen position (temporal continuity) -- WITHIN the same
+    continuing shot, "largest" instead flips between people as their
+    relative size shifts, settling the crop on the average of both."""
     if not faces:
         return None
-    if len(faces) == 1:
-        return faces[0]
+    if len(faces) == 1 or prefer_largest:
+        return faces[0]     # _detect_faces returns largest-first
     return min(faces, key=lambda f: abs(f - prev))
 
 
@@ -151,8 +154,13 @@ def shot_crop_keyframes(video: Path, start: float, end: float,
     prev = 0.5
     try:
         for s0, s1 in shot_bounds(cuts, start, end):
-            first_in_shot = True
-            for sub0, sub1 in sub_windows(s0, s1):
+            first_in_shot = True   # drives the is_cut flag on the kf actually appended
+            for i, (sub0, sub1) in enumerate(sub_windows(s0, s1)):
+                # the shot's opening detection can't trust `prev` -- it's a
+                # leftover position from a completely different scene --
+                # so prefer the largest face there; later re-detections
+                # within this same shot use temporal continuity as before
+                prefer_largest = (i == 0)
                 span = sub1 - sub0
                 centers = []
                 for f in _sample_fracs(span):
@@ -161,7 +169,7 @@ def shot_crop_keyframes(video: Path, start: float, end: float,
                     if not ok:
                         continue
                     faces = _detect_faces(frame)
-                    cx = choose_center(faces, prev)
+                    cx = choose_center(faces, prev, prefer_largest=prefer_largest)
                     if cx is not None:
                         centers.append(cx)
                 cx = sorted(centers)[len(centers) // 2] if centers else prev

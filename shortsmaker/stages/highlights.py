@@ -344,6 +344,33 @@ def finalize_metadata(g: dict, channel: dict) -> dict:
             "hashtags": hashtags, "tags": tags}
 
 
+def _diverse_pool(candidates: list[dict], n: int, duration: float) -> list[dict]:
+    """Up to n candidates spread across the WHOLE video timeline, instead
+    of pure top-score -- which can cluster entirely inside one loud or
+    keyword-dense stretch and never even show the LLM a candidate from
+    the rest of a long video. Best-scoring candidate per time-bucket
+    first, then top-score overall fills any remaining slots."""
+    if duration <= 0 or not candidates:
+        return sorted(candidates, key=lambda c: c["score"], reverse=True)[:n]
+    n_buckets = max(n, 1)
+    bucket_w = duration / n_buckets
+    best_per_bucket: dict[int, dict] = {}
+    for c in candidates:
+        b = min(int(((c["start"] + c["end"]) / 2) / bucket_w), n_buckets - 1)
+        if b not in best_per_bucket or c["score"] > best_per_bucket[b]["score"]:
+            best_per_bucket[b] = c
+    diverse = sorted(best_per_bucket.values(), key=lambda c: c["score"], reverse=True)
+    seen = {(c["start"], c["end"]) for c in diverse}
+    for c in sorted(candidates, key=lambda c: c["score"], reverse=True):
+        if len(diverse) >= n:
+            break
+        key = (c["start"], c["end"])
+        if key not in seen:
+            diverse.append(c)
+            seen.add(key)
+    return diverse[:n]
+
+
 def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                  duration: float, profile: str, meta: dict | None = None) -> list[dict]:
     """Grade the top candidates on an Opus-style rubric -- Hook / Flow /
@@ -354,7 +381,7 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
     # ~2x the requested clip count is plenty to pick from without blowing
     # the single-call output budget (risk R3 in PLAN.md)
     n_grade = min(max(cfg.num_clips * 2, 6), 10)
-    ranked = sorted(candidates, key=lambda c: c["score"], reverse=True)
+    top = _diverse_pool(candidates, n_grade, duration)
 
     focus_matches: list[dict] = []
     if cfg.focus:
@@ -366,16 +393,15 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                           reverse=True)
         focus_matches = [c for c in by_focus if focus_score(c["text"], cfg.focus) > 0][:6]
         seen, merged = set(), []
-        for c in focus_matches + ranked:
+        for c in focus_matches + top:
             key = (c["start"], c["end"])
             if key not in seen:
                 seen.add(key)
                 merged.append(c)
-        ranked = merged
-        n_grade = min(n_grade + len(focus_matches), 14)
+        top = merged
 
-    top = ranked[:n_grade]
-    rest = ranked[n_grade:]
+    top_keys = {(c["start"], c["end"]) for c in top}
+    rest = [c for c in candidates if (c["start"], c["end"]) not in top_keys]
     new_window_cap = 4 if cfg.focus else 2
 
     lines = [f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segments]
@@ -548,6 +574,25 @@ def run(cfg: Config, video: Path, transcript: dict,
         scored = llm_virality(cfg, segments, scored, duration, profile, meta)
 
     picked = pick_non_overlapping(scored, cfg.num_clips)
+
+    if cfg.focus:
+        # be honest about whether the picks actually deliver the requested
+        # content -- a graded viral score >50 means the LLM judged it a
+        # genuine match (the prompt hard-gates non-matches below 50);
+        # ungraded picks fall back to the keyword heuristic.
+        def _focus_matched(c: dict) -> bool:
+            v = c.get("virality")
+            if v and "viral" in v:
+                return v["viral"] > 50
+            return focus_score(c.get("text", ""), cfg.focus) > 0
+
+        for w in picked:
+            w["focus_matched"] = _focus_matched(w)
+        if not any(w["focus_matched"] for w in picked):
+            log.warning("focus %r: none of the picked clips genuinely match -- "
+                       "the video may not contain this content; showing the "
+                       "best available picks instead", cfg.focus)
+
     for w in picked:
         log.info("pick %.1f-%.1fs score=%.2f (%s)", w["start"], w["end"],
                  w["score"], w["reason"][:60])
