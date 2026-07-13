@@ -118,19 +118,47 @@ def energy_burst_score(times, rms, start: float, end: float) -> float:
     return min(max(z, 0.0) / 4.0, 1.0)
 
 
+def audio_expressiveness(wav: Path):
+    """Return (times, centroid) -- spectral centroid track for the whole
+    audio. A fully local, free signal (no LLM): its local variance is a
+    fast proxy for animated vocal delivery (rising/falling emphasis,
+    exclamations, surprise) vs a flat monotone read, without the cost of
+    full pitch tracking (librosa.pyin is much slower on long audio)."""
+    import librosa
+    y, sr = librosa.load(str(wav), sr=16000, mono=True)
+    hop = 512
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop)[0]
+    times = librosa.frames_to_time(np.arange(len(centroid)), sr=sr, hop_length=hop)
+    return times, centroid
+
+
+def expressiveness_score(times, centroid, start: float, end: float) -> float:
+    """Coefficient of variation of spectral centroid inside the window,
+    relative to the track's own variability. High = animated/excited
+    delivery; low = flat/monotone."""
+    mask = (times >= start) & (times <= end)
+    if mask.sum() < 4:
+        return 0.0
+    local_mean = float(centroid[mask].mean()) or 1e-9
+    local_cv = float(centroid[mask].std()) / local_mean
+    track_mean = float(centroid.mean()) or 1e-9
+    track_cv = float(centroid.std()) / track_mean or 1e-9
+    return min(local_cv / (track_cv * 1.5), 1.0)
+
+
 # Signal weights per content profile. "talk" is the original podcast/vlog
 # tuning; "action" (gaming, sports) trusts the audio+editing rhythm over
 # dialogue; "funny" hunts laughter and spikes.
 PROFILES = {
-    "talk":   {"energy": .30, "keywords": .30, "speech_rate_dev": .10,
+    "talk":   {"energy": .25, "keywords": .25, "speech_rate_dev": .10,
                "completeness": .20, "scene_aligned": .10,
-               "cut_density": .00, "energy_burst": .00},
+               "cut_density": .00, "energy_burst": .00, "expressiveness": .10},
     "action": {"energy": .25, "keywords": .05, "speech_rate_dev": .00,
                "completeness": .05, "scene_aligned": .10,
-               "cut_density": .25, "energy_burst": .30},
-    "funny":  {"energy": .15, "keywords": .35, "speech_rate_dev": .10,
+               "cut_density": .25, "energy_burst": .30, "expressiveness": .00},
+    "funny":  {"energy": .15, "keywords": .30, "speech_rate_dev": .10,
                "completeness": .10, "scene_aligned": .05,
-               "cut_density": .00, "energy_burst": .25},
+               "cut_density": .00, "energy_burst": .20, "expressiveness": .10},
 }
 
 
@@ -209,7 +237,8 @@ def focus_score(text: str, focus: str) -> float:
     return sum(1 for t in terms if t in tl) / len(terms)
 
 
-def score_windows(windows, cuts, times, rms, cfg: Config, profile: str) -> list[dict]:
+def score_windows(windows, cuts, times, rms, cfg: Config, profile: str,
+                  centroid=None) -> list[dict]:
     weights = PROFILES[profile]
     speech_rates = [len(w["text"].split()) / max(w["end"] - w["start"], 1)
                     for w in windows]
@@ -227,6 +256,8 @@ def score_windows(windows, cuts, times, rms, cfg: Config, profile: str) -> list[
             "scene_aligned": 1.0 if on_cut else 0.0,
             "cut_density": cut_density_score(cuts, w["start"], w["end"]),
             "energy_burst": energy_burst_score(times, rms, w["start"], w["end"]),
+            "expressiveness": (expressiveness_score(times, centroid, w["start"], w["end"])
+                               if centroid is not None else 0.0),
         }
         score = sum(weights[k] * v for k, v in signals.items())
         shown = {k: round(v, 3) for k, v in signals.items() if weights[k]}
@@ -371,6 +402,24 @@ def _diverse_pool(candidates: list[dict], n: int, duration: float) -> list[dict]
     return diverse[:n]
 
 
+def _template_metadata(c: dict, meta: dict | None, channel: dict) -> dict:
+    """Local, no-LLM upload metadata built directly from the clip's own
+    transcript excerpt and the source video's title. Used whenever the
+    grading call is unavailable (rate-limited, no key, provider down) so
+    clips still get a usable title/description/tags instead of nothing --
+    mirrors the existing template fallback for voiceover scripts. Routed
+    through finalize_metadata() so the CTA/hashtag/related assembly and
+    channel-profile branding stay identical to the LLM path."""
+    text = (c.get("text") or "").strip()
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s]
+    video_title = ((meta or {}).get("title") or "").strip()
+    title = video_title or (sentences[0] if sentences else "Watch this moment")
+    body = " ".join(sentences[:2]).strip() or title
+    fake_grade = {"title": title, "description": body, "related": "",
+                 "hashtags": [], "tags": []}
+    return finalize_metadata(fake_grade, channel)
+
+
 def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                  duration: float, profile: str, meta: dict | None = None) -> list[dict]:
     """Grade the top candidates on an Opus-style rubric -- Hook / Flow /
@@ -464,14 +513,16 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
                                 "which clips go viral. You are strict: most "
                                 "clips score under 60.")
     grades = llm.extract_json_array(reply)
-    if not grades:
-        log.info("LLM virality pass unavailable/unparseable (%d chars); "
-                 "using heuristics only", len(reply or ""))
-        return candidates
-
     channel = load_channel()      # per-channel branded/fixed constants
     if channel:
         log.info("metadata: applying channel profile %r", channel.get("name", "?"))
+
+    if not grades:
+        log.info("LLM virality pass unavailable/unparseable (%d chars); "
+                 "using heuristics + template metadata only", len(reply or ""))
+        for c in candidates:
+            c["metadata"] = _template_metadata(c, meta, channel)
+        return candidates
 
     def meta(g: dict) -> dict:
         return finalize_metadata(g, channel)
@@ -552,6 +603,14 @@ def run(cfg: Config, video: Path, transcript: dict,
     wav = cfg.run_dir / "audio_16k.wav"
     times, rms = audio_energy(wav)
     duration = float(times[-1]) if len(times) else 0.0
+    try:
+        # same wav/sr/hop as audio_energy -> its own times array lines up
+        # frame-for-frame with `times` above, so score_windows can index
+        # both rms and centroid with the single `times` array
+        _, centroid = audio_expressiveness(wav)
+    except Exception as e:
+        log.info("expressiveness signal unavailable (%s); scoring without it", str(e)[:120])
+        centroid = None
 
     profile = cfg.content_type
     if profile not in PROFILES:
@@ -569,7 +628,7 @@ def run(cfg: Config, video: Path, transcript: dict,
     if not windows:
         raise RuntimeError("video too short to build any candidate window")
 
-    scored = score_windows(windows, cuts, times, rms, cfg, profile)
+    scored = score_windows(windows, cuts, times, rms, cfg, profile, centroid)
     if cfg.use_llm_highlights:
         scored = llm_virality(cfg, segments, scored, duration, profile, meta)
 
