@@ -55,18 +55,26 @@ def _prompt(cfg: Config, clip: dict, duration: float, context: dict) -> str:
     return (
         f"You are writing the voiceover for a {duration:.0f}-second vertical "
         f"short cut from a longer video.\n\n{ctx_block}\n\n"
+        f"HARD LENGTH LIMIT: {int(max_words * 0.75)}-{max_words} words, no "
+        f"more (about {cfg.words_per_second} words/sec for a "
+        f"{duration:.0f}-second clip). This is a strict budget you must plan "
+        "against as you write -- if the dialogue has many beats, compress or "
+        "skip the less important/repetitive early ones (e.g. summarize a "
+        "grind or setup in one line) so you have enough words left to reach "
+        "and clearly describe the clip's ENDING. The final beat/payoff/twist "
+        "in the dialogue above is the most important thing to land -- a "
+        "script that runs out of words before describing it has failed, "
+        "even if every earlier detail was covered.\n\n"
         "Write the narration: a hook in the first sentence that grabs "
         "attention using ONLY what has already happened in the dialogue so "
         "far -- never reference, describe, or foreshadow something that "
         "occurs LATER in the dialogue above (no spoiling ahead of the "
         "footage). Then react to and comment on events in the SAME order "
-        "they occur in the dialogue, roughly one beat of narration per beat "
-        "of dialogue, so what's said stays in sync with what's on screen. "
-        f"Write {int(max_words * 0.75)}-{max_words} words (no fewer -- the "
-        f"voiceover must fill most of the clip at about "
-        f"{cfg.words_per_second} words/sec). Do NOT just repeat the "
-        "dialogue -- add reaction and insight a viewer wouldn't think of. "
-        "End with a line that makes the viewer want to comment or rewatch. "
+        "they occur in the dialogue, ending on a reaction to the clip's "
+        "final moment. Do NOT just repeat the dialogue -- add reaction and "
+        "insight a viewer wouldn't think of. End with a short line reacting "
+        "to that final moment that makes the viewer want to comment or "
+        "rewatch -- do not add anything after it. "
         "Write the script in ENGLISH regardless of what language the clip's "
         "own dialogue above is in."
     )
@@ -129,12 +137,21 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None) -> str:
         log.info("no LLM available -- using template fallback script")
         script = _fallback_script(clip["text"], max_words)
 
+    # tts.py's own fit-check absorbs a modest overrun with a barely-audible
+    # speed-up (capped at 1.10x) plus a harmless padded tail, so this is a
+    # safety net for runaway replies only -- not the primary length control
+    # (that's the prompt's own word budget). Loosened from 1.15x: at the
+    # tighter threshold this trim frequently sliced off the clip's climax,
+    # which the model -- writing in chronological order -- always puts last.
     words = script.split()
-    if len(words) > int(max_words * 1.15):          # hard-trim overruns
-        script = " ".join(words[:max_words])
-        if not re.search(r"[.!?]$", script):
-            script += "."
-        log.info("script trimmed to %d words for %ds budget", max_words, int(duration))
+    overrun_limit = int(max_words * 1.6)
+    if len(words) > overrun_limit:
+        # trim at the last full sentence at/before the limit, not mid-sentence
+        truncated = " ".join(words[:overrun_limit])
+        sentences = re.findall(r".*?[.!?](?:\s|$)", truncated, flags=re.S)
+        script = "".join(sentences).strip() if sentences else truncated + "."
+        log.info("script trimmed to ~%d words (overran %d-word cap for %ds budget)",
+                 len(script.split()), overrun_limit, int(duration))
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(script, encoding="utf-8")
