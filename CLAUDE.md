@@ -69,6 +69,15 @@ real run, not by guessing -- "Blaziken walks through" was playing over a
 frame that was still the enemy's attack. 7s keeps most beats to one
 sub-event. Don't widen this without re-checking real extracted frames
 against the captions at several timestamps, not just word-count math --
+
+edits.plan_beats() also subdivides any single kept (speech) interval
+LONGER than the span into ~span-sized pieces -- a source with near-
+continuous narration and almost no silence gaps (the Abra video) was
+producing one giant 30s beat, whose word budget couldn't fill the whole
+window, leaving a silent gap in the MIDDLE of the clip before the next
+beat's narration resumed. If a future report is "goes silent partway
+through, comes back later" (as opposed to "ends early" or "races
+ahead"), check beats.json for a beat much wider than BEAT_SPAN first --
 the beat-fit math looked fine at 15s too; the bug was in sub-beat
 ordering, which only shows up by actually looking at the video.
 
