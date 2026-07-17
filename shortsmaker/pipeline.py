@@ -32,9 +32,16 @@ RENDER_SETTINGS_KEYS = [
     "trim_silence", "silence_gap", "trim_bottom_pct",
 ]
 
+# Bump this whenever script/tts render LOGIC changes in a way that isn't
+# captured by any Config field above -- e.g. the beat-aligned narration
+# rewrite (v2) needed old cached clips to redo even though no user-facing
+# setting changed, or they'd silently keep serving the old drifting-VO render.
+RENDER_LOGIC_VERSION = 2
+
 
 def render_signature(cfg: Config) -> str:
     d = {k: getattr(cfg, k) for k in RENDER_SETTINGS_KEYS}
+    d["_v"] = RENDER_LOGIC_VERSION
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -184,7 +191,11 @@ def run(cfg: Config, progress=None) -> dict:
 
             if cfg.voiceover:
                 context = script_gen.clip_context(transcript, clip, meta)
-                script = script_gen.run(cfg, clip, clip_dir, context)
+                clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
+                beats = (edits.plan_beats(transcript["segments"], clip["start"],
+                                          clip["end"], keeps)
+                         if clip_len >= script_gen.BEAT_THRESHOLD else None)
+                script = script_gen.run(cfg, clip, clip_dir, context, beats)
                 ledger.add("script", 1)
                 entry["script"] = script
 

@@ -127,6 +127,88 @@ def _align_with_whisper(cfg: Config, wav: Path) -> list[dict]:
     return words
 
 
+# Cap how much we'll ever speed up the voice to fit -- a fast, rushed
+# voiceover is worse than one that overruns its target by a beat (the
+# background bed is padded, so a slight overrun just plays a touch of
+# trailing audio rather than cutting mid-word). 1.10 is barely perceptible;
+# the old 1.25 cap was a real, audible speed-up and the actual cause of
+# voiceovers sounding rushed.
+MAX_VO_SPEEDUP = 1.10
+
+
+def _synth(cfg: Config, text: str, out: Path, target_len: float) -> list[dict]:
+    """Synthesize `text`, speeding up (capped) if it overruns target_len."""
+    def _edge_with_fit() -> list[dict]:
+        w = synth_edge(cfg, text, out)
+        vo_len = media_duration(out)
+        if vo_len > target_len - 0.3:
+            speedup = min(vo_len / max(target_len - 0.5, 1), MAX_VO_SPEEDUP)
+            rate = f"+{int((speedup - 1) * 100)}%"
+            log.info("VO %.1fs > target %.1fs -- retrying at rate %s", vo_len, target_len, rate)
+            w = synth_edge(cfg, text, out, rate=rate)
+        return w
+
+    if cfg.tts_engine == "piper":
+        return synth_piper(cfg, text, out)
+    if cfg.tts_engine == "kokoro":
+        try:
+            words = synth_kokoro(cfg, text, out)
+            vo_len = media_duration(out)
+            if vo_len > target_len - 0.3:
+                speed = round(min(vo_len / max(target_len - 0.5, 1), MAX_VO_SPEEDUP), 2)
+                log.info("VO %.1fs > target %.1fs -- retrying at speed %.2fx",
+                         vo_len, target_len, speed)
+                words = synth_kokoro(cfg, text, out, speed=speed)
+            return words
+        except Exception as e:
+            log.warning("kokoro TTS failed (%s); falling back to edge-tts", str(e)[:150])
+            return _edge_with_fit()
+    return _edge_with_fit()
+
+
+def _run_beats(cfg: Config, beats: list[dict], clip_len: float, audio: Path) -> list[dict]:
+    """Synthesize each beat's line separately and place it at that beat's
+    own start time on the clip's timeline. This is what keeps narration
+    from ever describing a moment before it happens on screen, and turns
+    any leftover time into natural pauses between beats instead of one
+    long silent tail after the narration runs out early."""
+    import shutil
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ss_beats_"))
+    try:
+        inputs, delays, all_words = [], [], []
+        for i, b in enumerate(beats):
+            text = (b.get("narration") or "").strip()
+            if not text:
+                continue
+            seg_out = tmp_dir / f"beat_{i:02d}.mp3"
+            window = max(b["end"] - b["start"], 1.0)
+            words = _synth(cfg, text, seg_out, window)
+            for w in words:
+                all_words.append({"start": round(w["start"] + b["start"], 3),
+                                  "end": round(w["end"] + b["start"], 3),
+                                  "text": w["text"]})
+            inputs.append(seg_out)
+            delays.append(int(round(b["start"] * 1000)))
+
+        if not inputs:
+            raise RuntimeError("no beat produced narration")
+
+        args = []
+        for p in inputs:
+            args += ["-i", str(p)]
+        delayed = ";".join(f"[{i}:a]adelay={d}|{d}[a{i}]" for i, d in enumerate(delays))
+        mixed_in = "".join(f"[a{i}]" for i in range(len(inputs)))
+        filt = (f"{delayed};{mixed_in}amix=inputs={len(inputs)}:duration=longest:"
+               f"normalize=0,apad=whole_dur={clip_len}[a]")
+        args += ["-filter_complex", filt, "-map", "[a]", "-t", str(clip_len),
+                "-b:a", "192k", str(audio)]
+        run_ffmpeg(args)
+        return all_words
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 # ----------------------------------------------------------------- main
 def run(cfg: Config, script: str, clip: dict, clip_dir: Path) -> tuple[Path, list[dict]]:
     audio = clip_dir / "voiceover.mp3"
@@ -138,41 +220,11 @@ def run(cfg: Config, script: str, clip: dict, clip_dir: Path) -> tuple[Path, lis
     # compare against the post-cut length when dead air was trimmed
     clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
 
-    # Cap how much we'll ever speed up the voice to fit -- a fast, rushed
-    # voiceover is worse than one that overruns the clip by a beat (the
-    # background bed is padded via apad, so a slight overrun just plays a
-    # touch of trailing audio rather than cutting mid-word). 1.10 is
-    # barely perceptible; the old 1.25 cap was a real, audible speed-up
-    # and the actual cause of voiceovers sounding rushed.
-    MAX_VO_SPEEDUP = 1.10
-
-    def _edge_with_fit() -> list[dict]:
-        w = synth_edge(cfg, script, audio)
-        vo_len = media_duration(audio)
-        if vo_len > clip_len - 0.3:
-            speedup = min(vo_len / max(clip_len - 0.5, 1), MAX_VO_SPEEDUP)
-            rate = f"+{int((speedup - 1) * 100)}%"
-            log.info("VO %.1fs > clip %.1fs -- retrying at rate %s", vo_len, clip_len, rate)
-            w = synth_edge(cfg, script, audio, rate=rate)
-        return w
-
-    if cfg.tts_engine == "piper":
-        words = synth_piper(cfg, script, audio)
-    elif cfg.tts_engine == "kokoro":
-        try:
-            words = synth_kokoro(cfg, script, audio)
-            vo_len = media_duration(audio)
-            if vo_len > clip_len - 0.3:
-                speed = round(min(vo_len / max(clip_len - 0.5, 1), MAX_VO_SPEEDUP), 2)
-                log.info("VO %.1fs > clip %.1fs -- retrying at speed %.2fx",
-                         vo_len, clip_len, speed)
-                words = synth_kokoro(cfg, script, audio, speed=speed)
-        except Exception as e:
-            log.warning("kokoro TTS failed (%s); falling back to edge-tts",
-                        str(e)[:150])
-            words = _edge_with_fit()
+    beats_file = clip_dir / "beats.json"
+    if beats_file.exists():
+        words = _run_beats(cfg, read_json(beats_file), clip_len, audio)
     else:
-        words = _edge_with_fit()
+        words = _synth(cfg, script, audio, clip_len)
 
     if not words:
         raise RuntimeError("TTS produced no word timestamps")

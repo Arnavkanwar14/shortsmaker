@@ -15,8 +15,17 @@ import re
 
 from .. import llm
 from ..config import Config
+from ..util import write_json
 
 log = logging.getLogger("shortsmaker")
+
+# Clips at/above this length stop using one continuous narration block and
+# switch to per-BEAT scripting (see _beat_prompt/plan_beats): each beat's
+# line is written and later synthesized to play at that beat's own moment
+# in the clip, so narration can never run ahead of or behind the footage.
+# Below this, clip length is short enough that a single well-paced block
+# stays close enough to in-sync (verified against 35-45s test clips).
+BEAT_THRESHOLD = 60.0
 
 SYSTEM = (
     "You write voiceover scripts for viral TikTok/Reels/Shorts clips. "
@@ -80,6 +89,54 @@ def _prompt(cfg: Config, clip: dict, duration: float, context: dict) -> str:
     )
 
 
+def _beat_prompt(cfg: Config, beats: list[dict], context: dict) -> str:
+    parts = []
+    if context.get("title"):
+        head = f"The video is titled: \"{context['title']}\""
+        if context.get("uploader"):
+            head += f" (channel: {context['uploader']})"
+        parts.append(head)
+    if context.get("before_text"):
+        parts.append(f"Dialogue just BEFORE this clip (for context only):\n"
+                     f"{context['before_text']}")
+    beat_lines = []
+    for i, b in enumerate(beats, 1):
+        dur = max(b["end"] - b["start"], 1.0)
+        max_w = max(int(dur * cfg.words_per_second), 4)
+        beat_lines.append(
+            f"BEAT {i} ({b['start']:.0f}s-{b['end']:.0f}s into the clip, max "
+            f"{max_w} words):\n\"\"\"\n{b['text'] or '(no speech -- action footage)'}\n\"\"\"")
+    parts.append("\n\n".join(beat_lines))
+    ctx_block = "\n\n".join(parts)
+    return (
+        f"You are writing the voiceover for a vertical short, split into "
+        f"{len(beats)} timed BEATS below -- each beat's narration line "
+        "plays DURING that beat's own time window, so it must only "
+        "describe what's actually happening in that beat (or an earlier "
+        "one) -- never a later beat's events.\n\n"
+        f"{ctx_block}\n\n"
+        "Output EXACTLY this format, one marker before each beat's line, "
+        "nothing else:\n"
+        "###BEAT 1###\n<narration for beat 1>\n###BEAT 2###\n<narration for "
+        "beat 2>\n...(continue through the last beat, in order)\n\n"
+        "Each beat's line MUST stay at or under that beat's own word limit "
+        "-- it has to fit inside that beat's time window. The FINAL beat is "
+        "the clip's ending -- always describe it, it's the payoff/climax "
+        "and must never be cut short for length, even if you have to "
+        "compress an earlier, less important beat to make room. Sound like "
+        "a real person hyping a moment to a friend: conversational, present "
+        "tense, specific details, no generic filler ('wait for it', 'you "
+        "won't believe this'), no stage directions, no markdown, no emoji, "
+        "no hashtags. Write everything in English regardless of what "
+        "language the dialogue above is in."
+    )
+
+
+def _parse_beats(reply: str, n: int) -> list[str] | None:
+    parts = [_clean(p) for p in re.split(r"###\s*BEAT\s*\d+\s*###", reply) if p.strip()]
+    return parts if len(parts) == n else None
+
+
 def _clean(text: str) -> str:
     text = re.sub(r"^(here('s| is).*?:|script:|voiceover:)\s*", "", text,
                   flags=re.I | re.S)
@@ -120,16 +177,51 @@ def clip_context(transcript: dict, clip: dict, meta: dict,
     }
 
 
-def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None) -> str:
+def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
+        beats: list[dict] | None = None) -> str:
     out = clip_dir / "script.txt"
-    if out.exists() and not cfg.force:
+    beats_out = clip_dir / "beats.json"
+    already_done = out.exists() and (not beats or beats_out.exists())
+    if already_done and not cfg.force:
         log.info("script: %s exists, skipping", out)
         return out.read_text(encoding="utf-8")
 
-    # budget against the post-cut length when dead air was trimmed
+    context = context or {}
     duration = clip.get("edited_duration") or (clip["end"] - clip["start"])
+
+    if beats:
+        max_tokens = sum(max(int((b["end"] - b["start"]) * cfg.words_per_second), 4)
+                         for b in beats) * 3
+        reply = llm.complete(cfg, _beat_prompt(cfg, beats, context),
+                             system=SYSTEM, max_tokens=max_tokens)
+        parsed = _parse_beats(reply, len(beats)) if reply else None
+        if parsed is None:
+            log.info("beat-mode LLM reply unusable -- using per-beat template fallback")
+            parsed = [_fallback_script(
+                b["text"], max(int((b["end"] - b["start"]) * cfg.words_per_second), 6))
+                for b in beats]
+
+        for b, text in zip(beats, parsed):
+            beat_dur = max(b["end"] - b["start"], 1.0)
+            cap = max(int(beat_dur * cfg.words_per_second * 1.4), 6)
+            words = text.split()
+            if len(words) > cap:
+                text = " ".join(words[:cap])
+                if not re.search(r"[.!?]$", text):
+                    text += "."
+            b["narration"] = text
+
+        script = " ".join(b["narration"] for b in beats)
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        write_json(beats_out, beats)
+        out.write_text(script, encoding="utf-8")
+        log.info("beat script (%d beats, %d words): %s...",
+                 len(beats), len(script.split()), script[:70])
+        return script
+
+    # ---- single continuous block (short clips only) ----
     max_words = int(duration * cfg.words_per_second)
-    reply = llm.complete(cfg, _prompt(cfg, clip, duration, context or {}),
+    reply = llm.complete(cfg, _prompt(cfg, clip, duration, context),
                          system=SYSTEM, max_tokens=max_words * 3)
     script = _clean(reply) if reply else ""
 

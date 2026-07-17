@@ -84,3 +84,49 @@ def remap_time(t: float, keeps: list[tuple[float, float]]) -> float:
             return round(offset + (t - s), 3)
         offset += e - s
     return round(offset, 3)
+
+
+def plan_beats(segments: list[dict], clip_start: float, clip_end: float,
+              keeps: list[tuple[float, float]] | None, span: float = 15.0) -> list[dict]:
+    """Split a clip into ~span-second narration beats on the FINAL (post
+    jump-cut) timeline, each carrying the dialogue that actually falls in
+    that stretch. This is what lets a long clip's voiceover stay anchored
+    to the footage instead of running as one continuous block that drifts
+    out of sync (or leaves a silent tail) once the clip runs past ~a
+    minute. Chunk boundaries never split a single kept (speech) interval,
+    so a beat's text always comes from a contiguous stretch of dialogue."""
+    dialogue = [(max(s["start"] - clip_start, 0.0),
+                min(s["end"] - clip_start, clip_end - clip_start), s["text"])
+               for s in segments
+               if s["end"] > clip_start and s["start"] < clip_end]
+
+    chunks: list[list[float]] = []   # [orig_start, orig_end, ed_start, ed_end]
+    if keeps:
+        cum = 0.0
+        for ks, ke in keeps:
+            dur = ke - ks
+            if chunks and (cum + dur) - chunks[-1][2] <= span:
+                chunks[-1][1] = ke
+                chunks[-1][3] = cum + dur
+            else:
+                chunks.append([ks, ke, cum, cum + dur])
+            cum += dur
+    else:
+        dur = clip_end - clip_start
+        t = 0.0
+        while t < dur:
+            t_end = min(t + span, dur)
+            chunks.append([t, t_end, t, t_end])
+            t = t_end
+
+    beats = []
+    for orig_s, orig_e, ed_s, ed_e in chunks:
+        text = " ".join(t for s, e, t in dialogue if e > orig_s and s < orig_e).strip()
+        beats.append({"start": round(ed_s, 2), "end": round(ed_e, 2), "text": text})
+
+    # a short trailing sliver can't carry its own beat -- fold it back in
+    if len(beats) >= 2 and beats[-1]["end"] - beats[-1]["start"] < span * 0.4:
+        last = beats.pop()
+        beats[-1]["end"] = last["end"]
+        beats[-1]["text"] = (beats[-1]["text"] + " " + last["text"]).strip()
+    return beats
