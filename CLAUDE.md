@@ -59,6 +59,19 @@ old single-block path, verified unaffected. If this regresses, verify
 with a synthetic multi-beat 2min transcript (see the scratchpad test
 pattern) rather than guessing from the code.
 
+Beat span (script_gen.BEAT_SPAN) is 7s, not the original 15s -- at 15s a
+single beat could still bundle 2-3 separate sub-events from an
+action-heavy source (evolve, enemy attacks, counter-kick), and since the
+model wrote ONE line for the whole window, that line read out faster
+than the window and raced ahead to the later sub-event while the video
+was still on the earlier one. Confirmed by pulling actual frames from a
+real run, not by guessing -- "Blaziken walks through" was playing over a
+frame that was still the enemy's attack. 7s keeps most beats to one
+sub-event. Don't widen this without re-checking real extracted frames
+against the captions at several timestamps, not just word-count math --
+the beat-fit math looked fine at 15s too; the bug was in sub-beat
+ordering, which only shows up by actually looking at the video.
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the
