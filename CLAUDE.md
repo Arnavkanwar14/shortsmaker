@@ -81,6 +81,16 @@ ahead"), check beats.json for a beat much wider than BEAT_SPAN first --
 the beat-fit math looked fine at 15s too; the bug was in sub-beat
 ordering, which only shows up by actually looking at the video.
 
+Every beat's narration line MUST end with real terminal punctuation
+(. ! ?) -- a real run's beats.json showed 0/15 beats had any (bare
+comma-chained fragments), and since each beat is its OWN separate TTS
+call, Kokoro read every single one back completely flat with zero
+emphasis ("voiceover feels dead/plain" report). The beat prompt now
+requires it and pushes for "!" specifically on big moments (evolution,
+a hit landing, a reveal) rather than a calm "." by default; run() also
+enforces it in code as a backstop. If flatness is reported again, check
+beats.json for missing/comma-only endings before touching anything else.
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the
