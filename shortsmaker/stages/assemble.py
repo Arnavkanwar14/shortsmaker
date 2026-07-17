@@ -217,10 +217,20 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
                 keeps: list[tuple[float, float]] | None = None) -> str:
     info = ffprobe_video(video)
     w, h = info["width"], info["height"]
+
+    # user-specified watermark trim: crop a sliver off the bottom edge
+    # before any other framing decision. Never automatic -- only applied
+    # when trim_bottom_pct is explicitly set. Face-detection x-centers are
+    # unaffected (a bottom trim doesn't shift horizontal position), but it
+    # does change the working height for the aspect-ratio math below.
+    bot_px = int(h * cfg.trim_bottom_pct) // 2 * 2
+    watermark_trim = f"crop=w={w}:h={h - bot_px}:x=0:y=0," if bot_px > 0 else ""
+    h -= bot_px
+
     target_ar = cfg.out_width / cfg.out_height          # 9/16
 
     if w / h <= target_ar + 0.01:                       # already narrow: pad
-        return (f"scale={cfg.out_width}:-2,"
+        return (f"{watermark_trim}scale={cfg.out_width}:-2,"
                 f"pad={cfg.out_width}:{cfg.out_height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
 
     crop_w = int(h * target_ar) // 2 * 2                # even width
@@ -263,7 +273,7 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
         x_part = f"x={x}"
 
     if not balanced:
-        return (f"crop=w={crop_w}:h={h}:{x_part}:y=0,"
+        return (f"{watermark_trim}crop=w={crop_w}:h={h}:{x_part}:y=0,"
                 f"scale={cfg.out_width}:{cfg.out_height},setsar=1")
 
     # multi-chain graph: split into a blurred full-frame background and a
@@ -272,7 +282,7 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
     # returns -- overlay is the last (unlabeled) filterchain, so the comma
     # continuation and final [v] label land correctly either way.
     return (
-        f"split=2[bg0][fg0];"
+        f"{watermark_trim}split=2[bg0][fg0];"
         f"[bg0]scale={cfg.out_width}:{cfg.out_height}:force_original_aspect_ratio=increase,"
         f"crop={cfg.out_width}:{cfg.out_height},gblur=sigma=20[bg];"
         f"[fg0]crop=w={active_w}:h={h}:{x_part}:y=0,scale={cfg.out_width}:-2,setsar=1[fg];"

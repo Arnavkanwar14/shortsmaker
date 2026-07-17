@@ -266,11 +266,18 @@
         </div>
         <input type="file" id="file" accept="video/*" style="display:none">
 
+        <label style="display:flex;align-items:center;gap:8px;margin-top:16px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="whole_clip" onchange="wholeClipToggle()" style="width:auto">
+          Re-voice as-is (already a short? skip highlight search &mdash; use the whole video as one clip, no cropping/selection)
+        </label>
+
+        <div class="clip-search-only">
         <div class="row" style="margin-top:16px">
           <div><div class="section-label" style="margin-top:0">Clips</div>
             <input type="number" id="num_clips" min="1" max="10" value="3"></div>
           <div><div class="section-label" style="margin-top:0">Target length (s)</div>
             <input type="number" id="duration" min="20" max="90" value="45"></div>
+        </div>
         </div>
 
         <div class="section-label">Audio &amp; captions mode</div>
@@ -320,15 +327,17 @@
           <div class="hint">The original audio is ducked (default 18%) so the narration stays listenable &mdash; raise it if the source sound matters, e.g. 40-60% for gameplay.</div>
         </div>
 
+        <div class="clip-search-only">
         <div class="section-label">Find moments about (optional)</div>
         <input type="text" id="focus" placeholder="e.g. boss fight, funny fails, when they talk pricing">
         <div class="hint">Searches the whole video for genuine matches (a hard filter, not a nudge) -- clips are flagged if no strong match was found instead of silently substituting something else.</div>
 
         <div class="section-label">Manual clips (optional, skips auto-detection)</div>
         <input type="text" id="manual_clips" placeholder="12:30-13:10, 45:02-45:50">
+        </div>
 
         <div class="row" style="margin-top:16px">
-          <div><div class="section-label" style="margin-top:0">Content type</div>
+          <div id="contentTypeWrap"><div class="section-label" style="margin-top:0">Content type</div>
             <select id="content_type">
               <option value="auto" selected>auto-detect</option>
               <option value="talk">talking (podcast/vlog)</option>
@@ -372,12 +381,16 @@
               <option value="center">center</option>
             </select></div>
         </div>
-        <div class="section-label">Reframe style</div>
-        <select id="reframe_style">
-          <option value="tight" selected>tight &mdash; full-bleed crop (most zoomed)</option>
-          <option value="balanced">balanced &mdash; less zoom, blurred top/bottom fill</option>
-        </select>
-        <div class="hint">Whisper transcribes the source video's speech. Bigger = more accurate transcript (better highlight picks + better AI scripts) but slower on CPU. tiny &asymp; 8x faster than small. GPU is used automatically when available.</div>
+        <div class="row">
+          <div><div class="section-label">Reframe style</div>
+            <select id="reframe_style">
+              <option value="tight" selected>tight &mdash; full-bleed crop (most zoomed)</option>
+              <option value="balanced">balanced &mdash; less zoom, blurred top/bottom fill</option>
+            </select></div>
+          <div><div class="section-label">Trim off bottom % (optional)</div>
+            <input type="number" id="trim_bottom" min="0" max="30" value="0" step="0.5"></div>
+        </div>
+        <div class="hint">Trim only crops if you set it above 0 &mdash; use it to cut a burned-in watermark off the bottom edge before framing. Whisper transcribes the source video's speech; bigger = more accurate transcript but slower on CPU. GPU is used automatically when available.</div>
 
         <div class="section-label">Script LLM</div>
         <select id="llm_provider">
@@ -488,6 +501,15 @@ function engineToggle() {
   $('kokoroVoiceWrap').style.display = kokoro ? 'block' : 'none';
 }
 
+function wholeClipToggle() {
+  const whole = $('whole_clip').checked;
+  document.querySelectorAll('.clip-search-only').forEach(el => {
+    el.style.display = whole ? 'none' : 'block';
+  });
+  $('contentTypeWrap').style.display = whole ? 'none' : 'block';
+  if (whole && voMode) $('bg_volume').value = 0;   // mute by default when re-voicing
+}
+
 function lightbox(url) {
   $('lightboxImg').src = url;
   $('lightbox').classList.add('show');
@@ -508,7 +530,7 @@ function toast(msg) {
 // remember the user's settings between visits
 const SAVED_FIELDS = ['num_clips','duration','voice','style','llm_provider',
   'whisper_model','content_type','trim_silence','caption_preset',
-  'caption_position','tts_engine','kokoro_voice','reframe_style'];
+  'caption_position','tts_engine','kokoro_voice','reframe_style','trim_bottom'];
 function saveSettings() {
   const s = Object.fromEntries(SAVED_FIELDS.map(k => [k, $(k).value]));
   s._voMode = voMode;
@@ -563,6 +585,8 @@ $('go').onclick = async () => {
                    'focus','manual_clips','caption_preset','caption_position',
                    'tts_engine','kokoro_voice','reframe_style'])
     fd.append(k, $(k).value);
+  fd.append('whole_clip', $('whole_clip').checked ? 'true' : 'false');
+  fd.append('trim_bottom_pct', $('trim_bottom').value / 100);
   fd.append('voiceover', voMode ? 'true' : 'false');
   fd.append('vo_volume', $('vo_volume').value / 100);
   // caption mode: -1 lets the backend keep the original audio at 100%

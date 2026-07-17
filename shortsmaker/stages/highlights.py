@@ -479,6 +479,8 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         f"A {duration:.0f}-second video. {src_line}Transcript (timestamped):\n"
         f"{transcript_block}\n\n"
         f"Candidate clips to grade:\n{listing}\n\n{focus_line}"
+        "Write all title/description/hashtags/tags in ENGLISH regardless of "
+        "what language the transcript above is in.\n"
         f"Grade EACH candidate as a standalone viral short ({CONTENT_HINTS[profile]}). "
         "Score 0-99 on: hook (do the first seconds grab attention?), "
         "flow (complete thought, no mid-idea chop?), value (takeaway, emotion, "

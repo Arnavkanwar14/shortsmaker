@@ -43,6 +43,11 @@ class Config:
                                     # "funny fails", "when they talk pricing")
     manual_clips: str = ""          # optional: explicit spans, skips auto
                                     # detection: "12:30-13:10, 745-790"
+    whole_clip: bool = False        # skip highlight search entirely -- use
+                                    # the WHOLE input as one clip, unchanged.
+                                    # For re-voicing a short you already
+                                    # have: no cropping/selection, just a
+                                    # fresh voiceover (or captions) over it.
 
     # ---- LLM (script + optional highlight ranking) ----
     llm_provider: str = "auto"      # auto | ollama | groq | gemini | none
@@ -50,7 +55,10 @@ class Config:
     ollama_model: str = "llama3.1:8b"
     groq_model: str = "llama-3.3-70b-versatile"   # free tier, needs GROQ_API_KEY
     gemini_model: str = "gemini-2.0-flash"        # free tier, needs GEMINI_API_KEY
-    words_per_second: float = 2.5   # script length budget
+    words_per_second: float = 2.2   # script length budget -- deliberately a
+                                    # bit under natural TTS pace (~2.5+) so
+                                    # the voiceover rarely needs speeding up
+                                    # to fit (see tts.py's fit-check)
 
     # ---- TTS / voiceover ----
     voiceover: bool = True          # off: keep original audio, captions come
@@ -82,6 +90,11 @@ class Config:
     face_crop: bool = True          # mediapipe face-aware crop, else center
     reframe_style: str = "tight"    # tight | balanced (less zoom, blurred
                                     # top/bottom fill -- see assemble.crop_filter)
+    trim_bottom_pct: float = 0.0    # 0-1: crop this fraction off the bottom
+                                    # edge before framing (e.g. 0.08 to cut
+                                    # a burned-in watermark off a source
+                                    # clip). 0 = off. User-specified only --
+                                    # never applied automatically.
 
     # ---- cleanup (stage 7) ----
     clean: bool = False             # inpaint burned-in captions/watermarks

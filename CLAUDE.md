@@ -27,6 +27,15 @@ project root as `youtube_client_secret.json` (gitignored); "Connect" runs
 Upload ≈1600 quota units → ~6/day. Vertical + `#Shorts` in the description
 makes it register as a Short. Both json files are gitignored.
 
+## Voiceover pacing/sync (decided after a real reported bug)
+`words_per_second` is deliberately 2.2, under natural TTS pace, so the
+fit-check in tts.py rarely triggers a speed-up; if it does, `MAX_VO_SPEEDUP`
+is capped at 1.10 (was 1.25 -- audibly rushed, the actual cause of a
+reported "voiceover talks too fast"). script_gen's prompt explicitly
+forbids narrating events out of the transcript's own chronological order
+(no foreshadowing a later reveal in the opening hook) -- don't relax either
+without re-testing against a multi-beat clip (setup ... late reveal).
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the

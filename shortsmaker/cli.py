@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--clips", dest="manual_clips",
                    help="explicit spans, skips auto-detection: "
                         "'12:30-13:10, 745-790'")
+    r.add_argument("--whole-clip", dest="whole_clip",
+                   type=lambda s: s.lower() in ("1", "true", "yes"),
+                   help="true/false: use the whole input as one clip, no "
+                        "highlight search or selection -- for re-voicing a "
+                        "short you already have")
     r.add_argument("--style", choices=["kinetic", "plain", "none"])
     r.add_argument("--caption-preset", dest="caption_preset",
                    choices=["bold", "beast", "minimal", "karaoke"])
@@ -56,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["tight", "balanced"],
                    help="tight = full-bleed crop (default); balanced = wider, "
                         "less-zoomed crop with blurred top/bottom fill")
+    r.add_argument("--trim-bottom", dest="trim_bottom_pct", type=float,
+                   help="0..1: fraction to crop off the bottom edge before "
+                        "framing, e.g. 0.08 to remove a burned-in watermark "
+                        "(default 0, never automatic)")
     r.add_argument("--kokoro-voice", dest="kokoro_voice",
                    help="local Kokoro voice, e.g. af_heart, am_michael")
     r.add_argument("--clean", type=lambda s: s.lower() in ("1", "true", "yes"),

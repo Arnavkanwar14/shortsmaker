@@ -26,7 +26,14 @@ SYSTEM = (
     "numbers, objects, what someone says or does) -- never generic filler "
     "like 'you won't believe this' or 'wait for it'. "
     "Output ONLY the words to be spoken -- no stage directions, no quotes, "
-    "no emoji, no hashtags, no markdown."
+    "no emoji, no hashtags, no markdown. "
+    "ALWAYS write the script in English, even if the source dialogue you are "
+    "given is in a different language -- translate/react in English, never "
+    "mirror the source language. "
+    "Never narrate ahead of the footage: only react to dialogue that has "
+    "already happened at that point in the script, in the same order it "
+    "occurs -- describing a later moment early is the #1 thing that makes "
+    "a voiceover feel out of sync with the video."
 )
 
 
@@ -48,13 +55,20 @@ def _prompt(cfg: Config, clip: dict, duration: float, context: dict) -> str:
     return (
         f"You are writing the voiceover for a {duration:.0f}-second vertical "
         f"short cut from a longer video.\n\n{ctx_block}\n\n"
-        "Write the narration: a hook in the first sentence that names what's "
-        "concretely at stake, then react to and comment on what's happening. "
+        "Write the narration: a hook in the first sentence that grabs "
+        "attention using ONLY what has already happened in the dialogue so "
+        "far -- never reference, describe, or foreshadow something that "
+        "occurs LATER in the dialogue above (no spoiling ahead of the "
+        "footage). Then react to and comment on events in the SAME order "
+        "they occur in the dialogue, roughly one beat of narration per beat "
+        "of dialogue, so what's said stays in sync with what's on screen. "
         f"Write {int(max_words * 0.75)}-{max_words} words (no fewer -- the "
         f"voiceover must fill most of the clip at about "
         f"{cfg.words_per_second} words/sec). Do NOT just repeat the "
         "dialogue -- add reaction and insight a viewer wouldn't think of. "
-        "End with a line that makes the viewer want to comment or rewatch."
+        "End with a line that makes the viewer want to comment or rewatch. "
+        "Write the script in ENGLISH regardless of what language the clip's "
+        "own dialogue above is in."
     )
 
 

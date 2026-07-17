@@ -29,7 +29,7 @@ RENDER_SETTINGS_KEYS = [
     "voiceover", "tts_engine", "voice", "kokoro_voice", "piper_model",
     "vo_volume", "bg_audio_volume", "style", "caption_preset",
     "caption_position", "reframe_style", "face_crop", "llm_provider",
-    "trim_silence", "silence_gap",
+    "trim_silence", "silence_gap", "trim_bottom_pct",
 ]
 
 
@@ -108,7 +108,18 @@ def run(cfg: Config, progress=None) -> dict:
         video = cleanup.run(cfg, video)
     _p("highlights")
 
-    if cfg.manual_clips:
+    if cfg.whole_clip:
+        # re-voice a short you already have: no highlight search, no
+        # cropping/selection -- the whole input becomes the one clip.
+        # Its transcript (what's actually spoken) still feeds script_gen's
+        # prompt below, so the new AI voiceover reacts to the real content
+        # instead of writing something generic.
+        dur = media_duration(video)
+        text, _, _ = highlights._window_texts(transcript["segments"], 0.0, dur)
+        clips = [{"start": 0.0, "end": dur, "score": 1.0, "signals": {},
+                 "text": text, "reason": "whole clip (no highlight search)"}]
+        log.info("whole-clip mode: using the entire %.1fs input, unchanged", dur)
+    elif cfg.manual_clips:
         spans = parse_manual_clips(cfg.manual_clips)
         if not spans:
             raise ValueError(f"could not parse manual clips: {cfg.manual_clips!r} "

@@ -138,12 +138,19 @@ def run(cfg: Config, script: str, clip: dict, clip_dir: Path) -> tuple[Path, lis
     # compare against the post-cut length when dead air was trimmed
     clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
 
+    # Cap how much we'll ever speed up the voice to fit -- a fast, rushed
+    # voiceover is worse than one that overruns the clip by a beat (the
+    # background bed is padded via apad, so a slight overrun just plays a
+    # touch of trailing audio rather than cutting mid-word). 1.10 is
+    # barely perceptible; the old 1.25 cap was a real, audible speed-up
+    # and the actual cause of voiceovers sounding rushed.
+    MAX_VO_SPEEDUP = 1.10
+
     def _edge_with_fit() -> list[dict]:
         w = synth_edge(cfg, script, audio)
-        # if the VO overruns the clip, re-synthesize a bit faster (max +25%)
         vo_len = media_duration(audio)
         if vo_len > clip_len - 0.3:
-            speedup = min(vo_len / max(clip_len - 0.5, 1), 1.25)
+            speedup = min(vo_len / max(clip_len - 0.5, 1), MAX_VO_SPEEDUP)
             rate = f"+{int((speedup - 1) * 100)}%"
             log.info("VO %.1fs > clip %.1fs -- retrying at rate %s", vo_len, clip_len, rate)
             w = synth_edge(cfg, script, audio, rate=rate)
@@ -156,7 +163,7 @@ def run(cfg: Config, script: str, clip: dict, clip_dir: Path) -> tuple[Path, lis
             words = synth_kokoro(cfg, script, audio)
             vo_len = media_duration(audio)
             if vo_len > clip_len - 0.3:
-                speed = round(min(vo_len / max(clip_len - 0.5, 1), 1.25), 2)
+                speed = round(min(vo_len / max(clip_len - 0.5, 1), MAX_VO_SPEEDUP), 2)
                 log.info("VO %.1fs > clip %.1fs -- retrying at speed %.2fx",
                          vo_len, clip_len, speed)
                 words = synth_kokoro(cfg, script, audio, speed=speed)
