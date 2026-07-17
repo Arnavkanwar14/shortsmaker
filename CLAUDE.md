@@ -36,6 +36,15 @@ forbids narrating events out of the transcript's own chronological order
 (no foreshadowing a later reveal in the opening hook) -- don't relax either
 without re-testing against a multi-beat clip (setup ... late reveal).
 
+script_gen's hard-trim safety net is 1.6x the word budget (was 1.15x) and
+trims at a sentence boundary, not a blind word slice -- at 1.15x it kept
+chopping off the clip's climax (always last, since the model writes in
+order), which is exactly the "script ends early, missing the fight" bug
+a real user hit. The prompt now also explicitly tells the model to budget
+itself so it reaches the final beat, compressing early filler instead.
+Don't tighten the 1.6x cap without re-testing a long multi-beat clip
+against the actual climax appearing in the output.
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the
