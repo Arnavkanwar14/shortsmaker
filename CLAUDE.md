@@ -45,6 +45,20 @@ itself so it reaches the final beat, compressing early filler instead.
 Don't tighten the 1.6x cap without re-testing a long multi-beat clip
 against the actual climax appearing in the output.
 
+For clips >= script_gen.BEAT_THRESHOLD (60s), narration is no longer one
+continuous audio block -- that was the REAL bug behind repeat reports of
+"script ends early / describes the evolution too soon / silence at the
+end" on ~2min clips: natural TTS pace outruns the footage over a long
+clip, so a single block finishes way before the video does. Now
+edits.plan_beats() splits the clip into ~15s beats on the POST-CUT
+timeline, script_gen writes one line per beat in ONE LLM call (still
+respects the Groq budget rule), and tts.py synthesizes+places each beat
+at its own timestamp via ffmpeg adelay/amix. A moment literally cannot be
+narrated before it's on screen anymore. Short clips (<60s) still use the
+old single-block path, verified unaffected. If this regresses, verify
+with a synthetic multi-beat 2min transcript (see the scratchpad test
+pattern) rather than guessing from the code.
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the
