@@ -51,7 +51,14 @@ SYSTEM = (
     "'you won't believe this' or 'wait for it'. "
     "Sound like a real person: conversational, contractions, short punchy "
     "sentences, present tense, specific concrete details (names, numbers, "
-    "objects, what's actually said or shown). "
+    "objects, what's actually said or shown). Punctuation drives the "
+    "voice's delivery -- a line that trails off on a comma or has no "
+    "ending punctuation gets read completely flat with no emphasis, so "
+    "every sentence needs a real ending: a period for a calm beat, an "
+    "exclamation mark for a big one (an evolution, a hit landing, a name "
+    "being revealed). Don't chain a whole thought into one long "
+    "comma-linked clause -- split it into short, separately punctuated "
+    "sentences so the delivery actually has punch. "
     "Output ONLY the words to be spoken -- no stage directions, no quotes, "
     "no emoji, no hashtags, no markdown. "
     "ALWAYS write the script in English, even if the source dialogue you are "
@@ -152,8 +159,17 @@ def _beat_prompt(cfg: Config, beats: list[dict], context: dict) -> str:
         "punch up a transition. Sound like a real person: conversational, "
         "present tense, specific details, no generic filler ('wait for "
         "it', 'you won't believe this'), no stage directions, no markdown, "
-        "no emoji, no hashtags. Write everything in English regardless of "
-        "what language the dialogue above is in."
+        "no emoji, no hashtags. Each beat is voiced as its OWN separate "
+        "line -- it MUST end with a period, exclamation mark, or question "
+        "mark (never trail off on a comma or nothing), or it plays back "
+        "completely flat with no emphasis. Any beat covering a big moment "
+        "-- an evolution, a hit landing, a name being revealed, a win -- "
+        "MUST end with an exclamation mark, not a period; don't default to "
+        "a calm period on a beat that's supposed to hit hard. Don't chain "
+        "a beat's whole line into one long comma-linked clause with no "
+        "punch at the end -- split it into two short punctuated sentences "
+        "if it needs one. Write everything in English regardless of what "
+        "language the dialogue above is in."
     )
 
 
@@ -232,8 +248,12 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
             words = text.split()
             if len(words) > cap:
                 text = " ".join(words[:cap])
-                if not re.search(r"[.!?]$", text):
-                    text += "."
+            # each beat is its own separate TTS call -- a line with no
+            # terminal punctuation gets read back completely flat, which is
+            # exactly what caused a real "voiceover sounds dead" report.
+            # The prompt now asks for one, but enforce it either way.
+            if not re.search(r"[.!?]$", text):
+                text += "."
             b["narration"] = text
 
         script = " ".join(b["narration"] for b in beats)
