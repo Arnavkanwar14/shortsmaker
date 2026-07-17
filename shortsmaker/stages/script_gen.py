@@ -27,6 +27,16 @@ log = logging.getLogger("shortsmaker")
 # stays close enough to in-sync (verified against 35-45s test clips).
 BEAT_THRESHOLD = 60.0
 
+# Beat window size. 15s (the original value) was still coarse enough to
+# bundle 2-3 separate sub-events from an action-heavy source (e.g. evolve,
+# enemy attacks, counter-kick) into ONE beat -- the model wrote one line
+# covering all of it, and since that line is read out faster than the
+# window is long, the narration raced ahead to describe the LATER sub-event
+# while the video was still showing the earlier one (confirmed by pulling
+# frames from a real run: "Blaziken walks through" was playing over what
+# was still the enemy's attack). 7s keeps most beats to a single sub-event.
+BEAT_SPAN = 7.0
+
 SYSTEM = (
     "You write voiceover scripts for viral TikTok/Reels/Shorts clips by "
     "ADAPTING the original creator's own dialogue/narration into tight, "

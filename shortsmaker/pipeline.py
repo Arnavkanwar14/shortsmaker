@@ -36,7 +36,7 @@ RENDER_SETTINGS_KEYS = [
 # captured by any Config field above -- e.g. the beat-aligned narration
 # rewrite (v2) needed old cached clips to redo even though no user-facing
 # setting changed, or they'd silently keep serving the old drifting-VO render.
-RENDER_LOGIC_VERSION = 3
+RENDER_LOGIC_VERSION = 4
 
 
 def render_signature(cfg: Config) -> str:
@@ -193,7 +193,7 @@ def run(cfg: Config, progress=None) -> dict:
                 context = script_gen.clip_context(transcript, clip, meta)
                 clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
                 beats = (edits.plan_beats(transcript["segments"], clip["start"],
-                                          clip["end"], keeps)
+                                          clip["end"], keeps, span=script_gen.BEAT_SPAN)
                          if clip_len >= script_gen.BEAT_THRESHOLD else None)
                 script = script_gen.run(cfg, clip, clip_dir, context, beats)
                 ledger.add("script", 1)
