@@ -93,30 +93,51 @@ def plan_beats(segments: list[dict], clip_start: float, clip_end: float,
     that stretch. This is what lets a long clip's voiceover stay anchored
     to the footage instead of running as one continuous block that drifts
     out of sync (or leaves a silent tail) once the clip runs past ~a
-    minute. Chunk boundaries never split a single kept (speech) interval,
-    so a beat's text always comes from a contiguous stretch of dialogue."""
+    minute. Beat boundaries prefer not to split a single kept (speech)
+    interval, so a beat's text usually comes from one contiguous stretch of
+    dialogue -- BUT a keep interval longer than `span` on its own (a source
+    with near-continuous narration and few/no silence gaps) still gets
+    subdivided into ~span-sized pieces: leaving it as one giant beat means
+    that beat's word budget (sized for `span` seconds) can't fill the whole
+    window, leaving a long silent gap in the middle of the clip before the
+    next beat starts -- a real bug hit on a clip with almost no dead air."""
     dialogue = [(max(s["start"] - clip_start, 0.0),
                 min(s["end"] - clip_start, clip_end - clip_start), s["text"])
                for s in segments
                if s["end"] > clip_start and s["start"] < clip_end]
 
     chunks: list[list[float]] = []   # [orig_start, orig_end, ed_start, ed_end]
+    cum = 0.0
+
+    def add_piece(o_s: float, o_e: float) -> None:
+        nonlocal cum
+        d = o_e - o_s
+        if chunks and (cum + d) - chunks[-1][2] <= span:
+            chunks[-1][1] = o_e
+            chunks[-1][3] = cum + d
+        else:
+            chunks.append([o_s, o_e, cum, cum + d])
+        cum += d
+
     if keeps:
-        cum = 0.0
         for ks, ke in keeps:
             dur = ke - ks
-            if chunks and (cum + dur) - chunks[-1][2] <= span:
-                chunks[-1][1] = ke
-                chunks[-1][3] = cum + dur
-            else:
-                chunks.append([ks, ke, cum, cum + dur])
-            cum += dur
+            if dur <= span:
+                add_piece(ks, ke)
+                continue
+            n = max(round(dur / span), 1)
+            piece = dur / n
+            t = ks
+            for i in range(n):
+                t_end = ke if i == n - 1 else t + piece
+                add_piece(t, t_end)
+                t = t_end
     else:
         dur = clip_end - clip_start
         t = 0.0
         while t < dur:
             t_end = min(t + span, dur)
-            chunks.append([t, t_end, t, t_end])
+            add_piece(t, t_end)
             t = t_end
 
     beats = []
