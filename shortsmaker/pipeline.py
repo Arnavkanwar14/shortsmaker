@@ -36,7 +36,7 @@ RENDER_SETTINGS_KEYS = [
 # captured by any Config field above -- e.g. the beat-aligned narration
 # rewrite (v2) needed old cached clips to redo even though no user-facing
 # setting changed, or they'd silently keep serving the old drifting-VO render.
-RENDER_LOGIC_VERSION = 7
+RENDER_LOGIC_VERSION = 8
 
 
 def render_signature(cfg: Config) -> str:

@@ -204,6 +204,31 @@ def _run_beats(cfg: Config, beats: list[dict], clip_len: float, audio: Path) -> 
             seg_out = tmp_dir / f"beat_{i:02d}.mp3"
             window = max(b["end"] - b["start"], 1.0)
             words = _synth(cfg, text, seg_out, window, emphasis=text.endswith("!"))
+
+            # The speed-based fit-check above is capped at MAX_VO_SPEEDUP
+            # (1.10x) so it doesn't sound rushed, which means a beat that
+            # naturally runs well over its window can still come out longer
+            # than `window` even after that correction. Since every beat is
+            # placed at a FIXED delay regardless of how long the previous
+            # one ran, an overrun beat's tail plays at the same time as the
+            # next beat's opening words -- two lines talking over each
+            # other, a real reported bug. Hard-trim any residual overrun
+            # here as a backstop so beats can never overlap, even if that
+            # means clipping the last fraction of a second of a line.
+            actual_len = media_duration(seg_out)
+            if actual_len > window + 0.15:
+                trimmed = tmp_dir / f"beat_{i:02d}_trim.mp3"
+                run_ffmpeg(["-i", str(seg_out), "-t", str(window), str(trimmed)])
+                seg_out = trimmed
+                words = [w for w in words if w["start"] < window]
+                if words:  # the audio itself is cut at `window` -- clamp the
+                    words[-1]["end"] = min(words[-1]["end"], window)  # last
+                    # word's reported end so captions never claim a word was
+                    # heard past the point the audio was actually trimmed
+                log.info("beat %d ran %.1fs over its %.1fs window even after "
+                        "speed-up -- trimmed to avoid overlapping the next beat",
+                        i, actual_len - window, window)
+
             for w in words:
                 all_words.append({"start": round(w["start"] + b["start"], 3),
                                   "end": round(w["end"] + b["start"], 3),
