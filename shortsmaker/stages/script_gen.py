@@ -37,6 +37,18 @@ BEAT_THRESHOLD = 60.0
 # was still the enemy's attack). 7s keeps most beats to a single sub-event.
 BEAT_SPAN = 7.0
 
+# Word budget used ONLY for beat-mode narration -- deliberately higher than
+# cfg.words_per_second (2.2, kept conservative for the single-block path,
+# see CLAUDE.md). Measured from a real run: Kokoro/edge actually speak at
+# ~2.55 words/sec, so budgeting at 2.2 already under-fills every beat by
+# ~14% before the model even writes a word -- and on top of that, a
+# "max N words" ceiling with no floor pushed the model to write well under
+# its own budget. Together that produced 31% silence across a real clip
+# (dead air at the tail of nearly every beat) -- the reported "voiceover
+# stays silent a lot in between lines" bug. 2.6 fills each beat's window
+# close to full at the real observed rate.
+BEAT_WORDS_PER_SECOND = 2.6
+
 SYSTEM = (
     "You write voiceover scripts for viral TikTok/Reels/Shorts clips by "
     "ADAPTING the original creator's own dialogue/narration into tight, "
@@ -130,10 +142,11 @@ def _beat_prompt(cfg: Config, beats: list[dict], context: dict) -> str:
     beat_lines = []
     for i, b in enumerate(beats, 1):
         dur = max(b["end"] - b["start"], 1.0)
-        max_w = max(int(dur * cfg.words_per_second), 4)
+        max_w = max(int(dur * BEAT_WORDS_PER_SECOND), 4)
+        min_w = max(int(max_w * 0.85), 3)
         beat_lines.append(
-            f"BEAT {i} ({b['start']:.0f}s-{b['end']:.0f}s into the clip, max "
-            f"{max_w} words):\n\"\"\"\n{b['text'] or '(no speech -- action footage)'}\n\"\"\"")
+            f"BEAT {i} ({b['start']:.0f}s-{b['end']:.0f}s into the clip, "
+            f"{min_w}-{max_w} words):\n\"\"\"\n{b['text'] or '(no speech -- action footage)'}\n\"\"\"")
     parts.append("\n\n".join(beat_lines))
     ctx_block = "\n\n".join(parts)
     return (
@@ -147,8 +160,13 @@ def _beat_prompt(cfg: Config, beats: list[dict], context: dict) -> str:
         "nothing else:\n"
         "###BEAT 1###\n<narration for beat 1>\n###BEAT 2###\n<narration for "
         "beat 2>\n...(continue through the last beat, in order)\n\n"
-        "Each beat's line MUST stay at or under that beat's own word limit "
-        "-- it has to fit inside that beat's time window. The FINAL beat is "
+        "Each beat's line MUST land WITHIN that beat's own word range -- "
+        "not just under the top of it. Undershooting it is just as wrong "
+        "as going over: too few words means dead silence plays for the "
+        "back half of that beat before the next one starts, which sounds "
+        "just as broken as talking over the wrong footage. If a beat's own "
+        "dialogue is thin, don't just write a short line and stop -- add a "
+        "touch more reaction/detail to reach the range. The FINAL beat is "
         "the clip's ending -- always describe it, it's the payoff/climax "
         "and must never be cut short for length, even if you have to "
         "compress an earlier, less important beat to make room. For each "
@@ -231,7 +249,7 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
     duration = clip.get("edited_duration") or (clip["end"] - clip["start"])
 
     if beats:
-        max_tokens = sum(max(int((b["end"] - b["start"]) * cfg.words_per_second), 4)
+        max_tokens = sum(max(int((b["end"] - b["start"]) * BEAT_WORDS_PER_SECOND), 4)
                          for b in beats) * 3
         reply = llm.complete(cfg, _beat_prompt(cfg, beats, context),
                              system=SYSTEM, max_tokens=max_tokens)
@@ -239,12 +257,12 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
         if parsed is None:
             log.info("beat-mode LLM reply unusable -- using per-beat template fallback")
             parsed = [_fallback_script(
-                b["text"], max(int((b["end"] - b["start"]) * cfg.words_per_second), 6))
+                b["text"], max(int((b["end"] - b["start"]) * BEAT_WORDS_PER_SECOND), 6))
                 for b in beats]
 
         for b, text in zip(beats, parsed):
             beat_dur = max(b["end"] - b["start"], 1.0)
-            cap = max(int(beat_dur * cfg.words_per_second * 1.4), 6)
+            cap = max(int(beat_dur * BEAT_WORDS_PER_SECOND * 1.4), 6)
             words = text.split()
             if len(words) > cap:
                 text = " ".join(words[:cap])

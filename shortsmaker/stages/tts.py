@@ -21,14 +21,14 @@ log = logging.getLogger("shortsmaker")
 
 
 # ------------------------------------------------------------- edge-tts
-async def _edge_synth(text: str, voice: str, rate: str, out: Path) -> list[dict]:
+async def _edge_synth(text: str, voice: str, rate: str, pitch: str, out: Path) -> list[dict]:
     import edge_tts
     words = []
     try:
         # edge-tts >= 7 defaults to SentenceBoundary; ask for word events
-        comm = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, boundary="WordBoundary")
     except TypeError:  # edge-tts 6.x: word boundaries are the only mode
-        comm = edge_tts.Communicate(text, voice, rate=rate)
+        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     with open(out, "wb") as f:
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
@@ -41,8 +41,9 @@ async def _edge_synth(text: str, voice: str, rate: str, out: Path) -> list[dict]
     return words
 
 
-def synth_edge(cfg: Config, text: str, out: Path, rate: str = "+0%") -> list[dict]:
-    return asyncio.run(_edge_synth(text, cfg.voice, rate, out))
+def synth_edge(cfg: Config, text: str, out: Path, rate: str = "+0%",
+              pitch: str = "+0Hz") -> list[dict]:
+    return asyncio.run(_edge_synth(text, cfg.voice, rate, pitch, out))
 
 
 # --------------------------------------------------------------- kokoro
@@ -136,23 +137,42 @@ def _align_with_whisper(cfg: Config, wav: Path) -> list[dict]:
 MAX_VO_SPEEDUP = 1.10
 
 
-def _synth(cfg: Config, text: str, out: Path, target_len: float) -> list[dict]:
+# Prosody nudge for a beat ending in "!" (a big moment: an evolution, a hit
+# landing, a reveal) vs one ending calmly in "." -- punctuation alone tells
+# the model WHAT to say, but Kokoro/edge-tts don't infer much vocal energy
+# from it on their own, which is why a "devastating impact" line and the
+# "dust settles" line right after it could both come out equally flat. edge
+# actually exposes pitch/rate; Kokoro only exposes speed, so its contrast is
+# smaller, but a real difference (however imperfect) beats guessing at
+# nothing -- listen and re-tune these if the effect feels off either way.
+EMPHASIS_RATE = "+8%"
+EMPHASIS_PITCH = "+18Hz"
+EMPHASIS_KOKORO_SPEED = 1.06
+
+
+def _synth(cfg: Config, text: str, out: Path, target_len: float,
+          emphasis: bool = False) -> list[dict]:
     """Synthesize `text`, speeding up (capped) if it overruns target_len."""
+    base_rate = EMPHASIS_RATE if emphasis else "+0%"
+    base_pitch = EMPHASIS_PITCH if emphasis else "+0Hz"
+    base_rate_pct = int(base_rate.rstrip("%"))
+
     def _edge_with_fit() -> list[dict]:
-        w = synth_edge(cfg, text, out)
+        w = synth_edge(cfg, text, out, rate=base_rate, pitch=base_pitch)
         vo_len = media_duration(out)
         if vo_len > target_len - 0.3:
             speedup = min(vo_len / max(target_len - 0.5, 1), MAX_VO_SPEEDUP)
-            rate = f"+{int((speedup - 1) * 100)}%"
+            rate = f"+{base_rate_pct + int((speedup - 1) * 100)}%"
             log.info("VO %.1fs > target %.1fs -- retrying at rate %s", vo_len, target_len, rate)
-            w = synth_edge(cfg, text, out, rate=rate)
+            w = synth_edge(cfg, text, out, rate=rate, pitch=base_pitch)
         return w
 
     if cfg.tts_engine == "piper":
         return synth_piper(cfg, text, out)
     if cfg.tts_engine == "kokoro":
+        base_speed = EMPHASIS_KOKORO_SPEED if emphasis else 1.0
         try:
-            words = synth_kokoro(cfg, text, out)
+            words = synth_kokoro(cfg, text, out, speed=base_speed)
             vo_len = media_duration(out)
             if vo_len > target_len - 0.3:
                 speed = round(min(vo_len / max(target_len - 0.5, 1), MAX_VO_SPEEDUP), 2)
@@ -183,7 +203,7 @@ def _run_beats(cfg: Config, beats: list[dict], clip_len: float, audio: Path) -> 
                 continue
             seg_out = tmp_dir / f"beat_{i:02d}.mp3"
             window = max(b["end"] - b["start"], 1.0)
-            words = _synth(cfg, text, seg_out, window)
+            words = _synth(cfg, text, seg_out, window, emphasis=text.endswith("!"))
             for w in words:
                 all_words.append({"start": round(w["start"] + b["start"], 3),
                                   "end": round(w["end"] + b["start"], 3),
