@@ -11,7 +11,7 @@ import re
 import traceback
 from pathlib import Path
 
-from . import edits
+from . import edits, names
 from .config import Config
 from .stages import assemble, cleanup, highlights, ingest, script_gen, transcribe, tts
 from .util import CostLedger, media_duration, read_json, write_json
@@ -36,7 +36,7 @@ RENDER_SETTINGS_KEYS = [
 # captured by any Config field above -- e.g. the beat-aligned narration
 # rewrite (v2) needed old cached clips to redo even though no user-facing
 # setting changed, or they'd silently keep serving the old drifting-VO render.
-RENDER_LOGIC_VERSION = 9
+RENDER_LOGIC_VERSION = 10
 
 
 def render_signature(cfg: Config) -> str:
@@ -110,6 +110,14 @@ def run(cfg: Config, progress=None) -> dict:
     _p("transcribe")
     transcript = transcribe.run(cfg, video)
     ledger.add("transcribe", src_minutes)
+
+    # deterministic proper-name repair (known_names.txt): fixes Whisper's
+    # garbled/phonetic misspellings of known names (Blasiken, Gavite ...)
+    # in memory each run, BEFORE highlights/script see the text. The
+    # cached transcript.json on disk stays untouched (raw ASR output).
+    n_fixed = names.correct_transcript(transcript)
+    if n_fixed:
+        log.info("known-names repair: %d transcript fixes", n_fixed)
 
     if cfg.clean:
         video = cleanup.run(cfg, video)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import re
 
-from .. import llm
+from .. import llm, names
 from ..config import Config
 from ..util import write_json
 
@@ -283,6 +283,12 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
             # The prompt now asks for one, but enforce it either way.
             if not re.search(r"[.!?]$", text):
                 text += "."
+            # backstop name repair on what will actually be SPOKEN --
+            # catches garbles the transcript-level pass missed (e.g. a
+            # lowercase source garble the LLM copied and capitalized)
+            text, fixes = names.correct_text(text)
+            for frm, to in fixes:
+                log.info("name fix (narration): %s -> %s", frm, to)
             b["narration"] = text
 
         script = " ".join(b["narration"] for b in beats)
@@ -318,6 +324,10 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
         script = "".join(sentences).strip() if sentences else truncated + "."
         log.info("script trimmed to ~%d words (overran %d-word cap for %ds budget)",
                  len(script.split()), overrun_limit, int(duration))
+
+    script, fixes = names.correct_text(script)
+    for frm, to in fixes:
+        log.info("name fix (narration): %s -> %s", frm, to)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(script, encoding="utf-8")
