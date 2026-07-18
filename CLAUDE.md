@@ -91,6 +91,26 @@ a hit landing, a reveal) rather than a calm "." by default; run() also
 enforces it in code as a backstop. If flatness is reported again, check
 beats.json for missing/comma-only endings before touching anything else.
 
+Beat word budget uses its OWN rate, script_gen.BEAT_WORDS_PER_SECOND=2.6,
+NOT cfg.words_per_second (2.2 -- stays as-is, that one's still correct
+for the single-block path, don't touch it for beat-mode issues). Real
+measurement from a run: Kokoro speaks at ~2.55 wps, so budgeting beats at
+2.2 already under-filled every window by ~14% before the model wrote a
+word, and a max-only ("at or under N words") prompt with no floor let it
+undershoot further -- 31% of a real clip was silence, spread as a gap at
+the tail of nearly every beat ("voiceover stays silent a lot in between
+lines"). The beat prompt now gives a min-max RANGE and says undershooting
+is as wrong as overshooting. If gaps reappear, check beats.json fill %
+(spoken audio span / beat window) before assuming it's a sync issue.
+
+Per-beat prosody: script_gen.py tags a beat "!" for big moments and "."
+for calm ones (see the punctuation rule above); tts.py reads that off
+`narration.endswith("!")` and applies EMPHASIS_RATE/EMPHASIS_PITCH on
+edge-tts or EMPHASIS_KOKORO_SPEED on Kokoro. These are untuned heuristic
+guesses (no way to listen and verify from here) -- if the energy contrast
+feels off, adjust the constants at the top of tts.py's `_synth()` section
+rather than re-architecting anything.
+
 ## Gotchas (all discovered the hard way)
 - HF serverless Inference API no longer hosts TTS (routes to PAID partner
   providers) -- abandoned in favor of Kokoro-82M running locally via the
