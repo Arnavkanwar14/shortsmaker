@@ -161,3 +161,22 @@ overrun one, above) produced an audible click/abrupt cutoff right at
 the sentence boundary ("voiceover stops suddenly and starts next
 line"). If choppiness is reported again, check whether the fade filter
 is still applied in `_run_beats()` before assuming it's a timing issue.
+
+## Proper-name garbling (Spanish Pokemon source -- recurring, now handled)
+Since most inputs are Spanish Pokemon videos converted to English,
+Whisper regularly mangles a name it doesn't recognize -- phonetic
+misspellings (Blasiken, Gavite, Kombusken) or outright ASR nonsense
+(carbana, "Crow Down" for Murkrow). Two layers now handle this, don't
+remove either without understanding what the other doesn't catch:
+1. `shortsmaker/names.py` -- deterministic fuzzy-match against
+   `known_names.txt` (root, one name per line, currently all 1025
+   PokeAPI species; swap the file for other franchises/content).
+   Catches close phonetic misspellings ONLY. Runs on the transcript
+   right after transcribe, and again on the narration as a backstop.
+2. The SYSTEM prompt in script_gen.py -- catches full ASR hallucinations
+   that aren't a close spelling match (Crow Down -> Murkrow) using video
+   context, but it's best-effort/LLM-dependent, not guaranteed.
+If a new garbled name shows up in the wild, check which layer should
+have caught it: a spelling variant -> names.py should already handle
+it (verify CUTOFF=0.80 isn't too strict); a totally different word ->
+that's the prompt-instruction's job, not names.py's.
