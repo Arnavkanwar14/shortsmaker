@@ -162,6 +162,20 @@ the sentence boundary ("voiceover stops suddenly and starts next
 line"). If choppiness is reported again, check whether the fade filter
 is still applied in `_run_beats()` before assuming it's a timing issue.
 
+Each dialogue segment belongs to exactly ONE beat (midpoint assignment
+in plan_beats). The old any-overlap rule put a boundary-spanning segment
+into BOTH beats' source text, and the model narrated it twice -- the
+real cause of a "sentences repeat" report; the resulting overlong beats
+then got blind-word-sliced by the cap, causing the "sentences cut off
+mid-clause" half of the same report (cap now trims at sentence
+boundaries). Relatedly, tts._run_beats places beats with SHIFT-to-fit
+(an overrunning beat pushes the next start later; re-syncs at the next
+underrun) instead of hard-trimming audio at the window edge, which cut
+words mid-sentence 13 times in one real run. The only hard audio cut
+left is at the clip's absolute end. If repeats/cuts come back, check
+beats.json source texts for duplication FIRST -- the model repeating
+itself almost always means the input beats repeat themselves.
+
 ## Proper-name garbling (Spanish Pokemon source -- recurring, now handled)
 Since most inputs are Spanish Pokemon videos converted to English,
 Whisper regularly mangles a name it doesn't recognize -- phonetic
