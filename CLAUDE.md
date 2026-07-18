@@ -153,3 +153,11 @@ to get spoken verbatim. The prompt now says to recognize a garbled/
 foreign-transliterated name from context (title, other names already
 used) and write the real name instead -- verified fixing carbana/Crow
 Down/mitoad into Carvanha/Murkrow/Mudkip on a real transcript.
+
+Every beat's audio gets a short fade (40ms in, 120ms out) before being
+placed via adelay -- each beat is a separately-synthesized clip with its
+own hard digital edges, so butting them together (or hard-trimming an
+overrun one, above) produced an audible click/abrupt cutoff right at
+the sentence boundary ("voiceover stops suddenly and starts next
+line"). If choppiness is reported again, check whether the fade filter
+is still applied in `_run_beats()` before assuming it's a timing issue.
