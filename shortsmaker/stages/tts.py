@@ -216,18 +216,36 @@ def _run_beats(cfg: Config, beats: list[dict], clip_len: float, audio: Path) -> 
             # here as a backstop so beats can never overlap, even if that
             # means clipping the last fraction of a second of a line.
             actual_len = media_duration(seg_out)
-            if actual_len > window + 0.15:
-                trimmed = tmp_dir / f"beat_{i:02d}_trim.mp3"
-                run_ffmpeg(["-i", str(seg_out), "-t", str(window), str(trimmed)])
-                seg_out = trimmed
+            overrun = actual_len > window + 0.15
+            if overrun:
                 words = [w for w in words if w["start"] < window]
-                if words:  # the audio itself is cut at `window` -- clamp the
-                    words[-1]["end"] = min(words[-1]["end"], window)  # last
-                    # word's reported end so captions never claim a word was
-                    # heard past the point the audio was actually trimmed
+                if words:  # the audio is about to be cut at `window` -- clamp
+                    words[-1]["end"] = min(words[-1]["end"], window)  # the
+                    # last word's reported end so captions never claim a
+                    # word was heard past where the audio was actually cut
                 log.info("beat %d ran %.1fs over its %.1fs window even after "
-                        "speed-up -- trimmed to avoid overlapping the next beat",
+                        "speed-up -- trimming to avoid overlapping the next beat",
                         i, actual_len - window, window)
+
+            # Every beat is a separately-synthesized clip with its own hard
+            # digital start/end, so butting them together (or hard-trimming
+            # an overrun one) produces an audible click/abrupt cutoff right
+            # at the sentence boundary -- a real reported bug ("voiceover
+            # stops suddenly and starts next line"). A short fade in/out on
+            # every beat, not just trimmed ones, smooths that transition;
+            # 40ms in only touches the TTS engine's own lead-in silence
+            # (never real speech), 120ms out is gentle enough not to be
+            # noticed as an early cutoff on beats that weren't trimmed.
+            final_len = min(actual_len, window) if overrun else actual_len
+            fade_out_at = max(final_len - 0.12, 0.0)
+            faded = tmp_dir / f"beat_{i:02d}_faded.mp3"
+            run_ffmpeg([
+                "-i", str(seg_out),
+                *(["-t", str(window)] if overrun else []),
+                "-af", f"afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out_at:.3f}:d=0.12",
+                str(faded),
+            ])
+            seg_out = faded
 
             for w in words:
                 all_words.append({"start": round(w["start"] + b["start"], 3),
