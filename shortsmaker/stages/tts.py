@@ -197,6 +197,7 @@ def _run_beats(cfg: Config, beats: list[dict], clip_len: float, audio: Path) -> 
     tmp_dir = Path(tempfile.mkdtemp(prefix="ss_beats_"))
     try:
         inputs, delays, all_words = [], [], []
+        cursor = 0.0   # end of the previously placed beat's audio
         for i, b in enumerate(beats):
             text = (b.get("narration") or "").strip()
             if not text:
@@ -204,55 +205,53 @@ def _run_beats(cfg: Config, beats: list[dict], clip_len: float, audio: Path) -> 
             seg_out = tmp_dir / f"beat_{i:02d}.mp3"
             window = max(b["end"] - b["start"], 1.0)
             words = _synth(cfg, text, seg_out, window, emphasis=text.endswith("!"))
-
-            # The speed-based fit-check above is capped at MAX_VO_SPEEDUP
-            # (1.10x) so it doesn't sound rushed, which means a beat that
-            # naturally runs well over its window can still come out longer
-            # than `window` even after that correction. Since every beat is
-            # placed at a FIXED delay regardless of how long the previous
-            # one ran, an overrun beat's tail plays at the same time as the
-            # next beat's opening words -- two lines talking over each
-            # other, a real reported bug. Hard-trim any residual overrun
-            # here as a backstop so beats can never overlap, even if that
-            # means clipping the last fraction of a second of a line.
             actual_len = media_duration(seg_out)
-            overrun = actual_len > window + 0.15
-            if overrun:
-                words = [w for w in words if w["start"] < window]
-                if words:  # the audio is about to be cut at `window` -- clamp
-                    words[-1]["end"] = min(words[-1]["end"], window)  # the
-                    # last word's reported end so captions never claim a
-                    # word was heard past where the audio was actually cut
-                log.info("beat %d ran %.1fs over its %.1fs window even after "
-                        "speed-up -- trimming to avoid overlapping the next beat",
-                        i, actual_len - window, window)
 
-            # Every beat is a separately-synthesized clip with its own hard
-            # digital start/end, so butting them together (or hard-trimming
-            # an overrun one) produces an audible click/abrupt cutoff right
-            # at the sentence boundary -- a real reported bug ("voiceover
-            # stops suddenly and starts next line"). A short fade in/out on
-            # every beat, not just trimmed ones, smooths that transition;
-            # 40ms in only touches the TTS engine's own lead-in silence
-            # (never real speech), 120ms out is gentle enough not to be
-            # noticed as an early cutoff on beats that weren't trimmed.
-            final_len = min(actual_len, window) if overrun else actual_len
+            # SHIFT-to-fit, not CUT-to-fit: a beat that still runs past its
+            # window after the capped speed-up simply pushes the next beat's
+            # start later (never before the previous beat's audio ends), and
+            # placement re-syncs to the real timestamps at the next beat
+            # that underruns. The previous approach hard-trimmed the audio
+            # at the window edge, which cut sentences off mid-word -- a
+            # real reported bug. A second or so of drift that self-corrects
+            # is far less noticeable than words disappearing.
+            place = max(b["start"], cursor)
+            if place > b["start"] + 0.3:
+                log.info("beat %d starts %.1fs late (previous beat ran over) "
+                        "-- re-syncs at the next gap", i, place - b["start"])
+
+            # the only remaining hard cut: never run past the END of the
+            # clip (assemble's mix is clip-length; a tail would be chopped
+            # with a click there anyway -- better to fade it ourselves)
+            final_len = min(actual_len, max(clip_len - place - 0.1, 0.5))
+            trimmed = final_len < actual_len - 0.05
+            if trimmed:
+                log.info("final beat exceeds clip end -- trimming %.1fs",
+                        actual_len - final_len)
+                words = [w for w in words if w["start"] < final_len]
+                if words:
+                    words[-1]["end"] = min(words[-1]["end"], final_len)
+
+            # Every beat is a separately-synthesized clip with hard digital
+            # edges; a short fade in/out (40ms/120ms) keeps the transition
+            # between beats from sounding like an abrupt stop/start.
             fade_out_at = max(final_len - 0.12, 0.0)
             faded = tmp_dir / f"beat_{i:02d}_faded.mp3"
             run_ffmpeg([
                 "-i", str(seg_out),
-                *(["-t", str(window)] if overrun else []),
+                *(["-t", str(final_len)] if trimmed else []),
                 "-af", f"afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out_at:.3f}:d=0.12",
                 str(faded),
             ])
             seg_out = faded
 
             for w in words:
-                all_words.append({"start": round(w["start"] + b["start"], 3),
-                                  "end": round(w["end"] + b["start"], 3),
+                all_words.append({"start": round(w["start"] + place, 3),
+                                  "end": round(w["end"] + place, 3),
                                   "text": w["text"]})
             inputs.append(seg_out)
-            delays.append(int(round(b["start"] * 1000)))
+            delays.append(int(round(place * 1000)))
+            cursor = place + final_len + 0.10
 
         if not inputs:
             raise RuntimeError("no beat produced narration")

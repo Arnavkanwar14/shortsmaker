@@ -171,6 +171,10 @@ def _beat_prompt(cfg: Config, beats: list[dict], context: dict) -> str:
         "nothing else:\n"
         "###BEAT 1###\n<narration for beat 1>\n###BEAT 2###\n<narration for "
         "beat 2>\n...(continue through the last beat, in order)\n\n"
+        "Never re-narrate something you already covered in an earlier "
+        "beat's line -- each beat must say something NEW; repeating a "
+        "sentence or idea from the previous beat is the #1 thing that "
+        "makes the voiceover sound broken. "
         "Each beat's line MUST land WITHIN that beat's own word range -- "
         "not just under the top of it. Undershooting it is just as wrong "
         "as going over: too few words means dead silence plays for the "
@@ -276,7 +280,12 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
             cap = max(int(beat_dur * BEAT_WORDS_PER_SECOND * 1.4), 6)
             words = text.split()
             if len(words) > cap:
-                text = " ".join(words[:cap])
+                # trim at the last full sentence at/before the cap, never
+                # mid-clause -- a blind word slice left fragments like
+                # "It's a harsh world for a Totodile, with." in real output
+                truncated = " ".join(words[:cap])
+                sentences = re.findall(r".*?[.!?](?:\s|$)", truncated, flags=re.S)
+                text = "".join(sentences).strip() if sentences else truncated
             # each beat is its own separate TTS call -- a line with no
             # terminal punctuation gets read back completely flat, which is
             # exactly what caused a real "voiceover sounds dead" report.

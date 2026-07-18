@@ -140,9 +140,17 @@ def plan_beats(segments: list[dict], clip_start: float, clip_end: float,
             add_piece(t, t_end)
             t = t_end
 
+    # Each dialogue segment goes to exactly ONE beat -- the one containing
+    # its midpoint. The old any-overlap rule put a segment spanning a beat
+    # boundary into BOTH beats' text, and the model then dutifully narrated
+    # the same source line twice ("It attacks Corphish... It attacks
+    # Corphish..."), which was the real cause of a reported
+    # sentences-repeat bug (and the resulting overlong beats got trimmed
+    # mid-clause, causing the sentences-cut-off half of the same report).
     beats = []
     for orig_s, orig_e, ed_s, ed_e in chunks:
-        text = " ".join(t for s, e, t in dialogue if e > orig_s and s < orig_e).strip()
+        text = " ".join(t for s, e, t in dialogue
+                        if orig_s <= (s + e) / 2 < orig_e).strip()
         beats.append({"start": round(ed_s, 2), "end": round(ed_e, 2), "text": text})
 
     # a short trailing sliver can't carry its own beat -- fold it back in
