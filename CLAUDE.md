@@ -130,3 +130,26 @@ rather than re-architecting anything.
   path — Windows drive colons break filtergraphs otherwise.
 - `runs/` folders are ~1GB each (source video kept for re-runs) — gitignored,
   deletable from the Library tab.
+
+## Beat-mode fixes: a chain reaction (read before touching wps/span again)
+Raising BEAT_WORDS_PER_SECOND (2.2 -> 2.6, to kill silent gaps) directly
+caused a NEW bug: beats now legitimately exceed 100% of their window
+often enough that the 1.10x speed cap can't always pull them back under
+it, and since beats play at a FIXED delay, an overrun beat bleeds into
+the next one -- audible overlapping voices, a real reported bug.
+tts.py's `_run_beats()` now hard-trims (ffmpeg `-t window`) any beat
+still over its window after the speed correction, and clamps caption
+word timestamps to match. If you tune BEAT_WORDS_PER_SECOND again,
+re-verify BOTH fill% (no silence) AND zero-overlap (no bleed) against a
+real multi-beat transcript -- they trade off against each other, fixing
+one blindly re-breaks the other.
+
+script_gen now corrects garbled proper names: a non-English source
+transcript (e.g. Spanish) sometimes gets mangled by Whisper into ASR
+nonsense or a phonetic misspelling of a real English name (Kombusken,
+Gavite, Blasiken, carbana, "Crow Down" for Murkrow). Since script_gen
+adapts the source's own words faithfully by design, those errors used
+to get spoken verbatim. The prompt now says to recognize a garbled/
+foreign-transliterated name from context (title, other names already
+used) and write the real name instead -- verified fixing carbana/Crow
+Down/mitoad into Carvanha/Murkrow/Mudkip on a real transcript.
