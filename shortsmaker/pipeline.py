@@ -11,7 +11,7 @@ import re
 import traceback
 from pathlib import Path
 
-from . import edits, names
+from . import edits, names, reframe
 from .config import Config
 from .stages import assemble, cleanup, highlights, ingest, script_gen, transcribe, tts
 from .util import CostLedger, media_duration, read_json, write_json
@@ -36,7 +36,7 @@ RENDER_SETTINGS_KEYS = [
 # captured by any Config field above -- e.g. the beat-aligned narration
 # rewrite (v2) needed old cached clips to redo even though no user-facing
 # setting changed, or they'd silently keep serving the old drifting-VO render.
-RENDER_LOGIC_VERSION = 11
+RENDER_LOGIC_VERSION = 12
 
 
 def render_signature(cfg: Config) -> str:
@@ -215,6 +215,19 @@ def run(cfg: Config, progress=None) -> dict:
                 vo_audio = None
                 caption_words = (edits.remap_words(words_rel, keeps)
                                  if keeps else words_rel)
+
+            # auto-generate the subject-following reframe track once per
+            # clip (unless the user already hand-edited one, which we never
+            # overwrite). assemble reads reframe.json from clip_dir.
+            # only generate when missing: never clobber a hand-edited track,
+            # and re-detection is deterministic so there's nothing to gain by
+            # regenerating. To force fresh detection, delete reframe.json.
+            if cfg.face_crop:
+                reframe_file = clip_dir / "reframe.json"
+                if not reframe_file.exists():
+                    subs = reframe.detect_subjects(video, clip["start"], clip["end"])
+                    track = reframe.auto_track(subs, clip["end"] - clip["start"])
+                    write_json(reframe_file, track)
 
             final = assemble.run(cfg, video, clip, clip_dir, vo_audio,
                                  caption_words, keeps)

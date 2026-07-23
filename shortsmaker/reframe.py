@@ -199,6 +199,43 @@ def crop_pan_expr(track: list[dict], iw: int, ih: int, zoom: float,
     return f"trunc(({'+'.join(terms)})/2)*2"
 
 
+def crop_chain(track: list[dict], iw: int, ih: int, out_w: int, out_h: int,
+               remap=None) -> str | None:
+    """The crop+scale filter body (no leading watermark trim, no trailing
+    caption/[v] label) for use INSIDE assemble's existing filtergraph, so it
+    inherits watermark-trim and jump-cut handling. `remap` optionally maps a
+    keyframe's clip-time onto the post-jump-cut timeline (assemble passes
+    edits.remap_time bound to its keeps). Returns None when the track is a
+    no-op on an already-vertical source (caller keeps its own framing)."""
+    zoom = clip_zoom(track)
+    target_ar = out_w / out_h
+    if iw / ih >= target_ar:
+        base_w, base_h = ih * target_ar, ih
+    else:
+        base_w, base_h = iw, iw / target_ar
+    crop_w = int(base_w / zoom) // 2 * 2
+    crop_h = int(base_h / zoom) // 2 * 2
+
+    source_is_vertical = abs(iw / ih - target_ar) < 0.02
+    static_center = all(abs(k["cx"] - 0.5) < 0.02 and abs(k["cy"] - 0.5) < 0.02
+                        for k in track)
+    if source_is_vertical and zoom <= MIN_USEFUL_ZOOM and static_center:
+        return None
+
+    tr = track
+    if remap is not None:
+        tr, seen = [], set()
+        for k in track:
+            rt = round(remap(k["t"]), 3)
+            if rt not in seen:      # keep first at each remapped instant
+                seen.add(rt)
+                tr.append({**k, "t": rt})
+    x_expr = crop_pan_expr(tr, iw, ih, zoom, crop_w, crop_h, "x")
+    y_expr = crop_pan_expr(tr, iw, ih, zoom, crop_w, crop_h, "y")
+    return (f"crop=w={crop_w}:h={crop_h}:x='{x_expr}':y='{y_expr}',"
+            f"scale={out_w}:{out_h},setsar=1")
+
+
 def render_filter(track: list[dict], iw: int, ih: int,
                   out_w: int, out_h: int) -> str:
     """ffmpeg -vf chain for the reframe track: crop the fixed-zoom 9:16

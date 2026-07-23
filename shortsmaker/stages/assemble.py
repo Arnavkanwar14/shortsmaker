@@ -214,7 +214,8 @@ def _crop_x_mixed_expr(kfs: list[tuple[float, float, bool]], crop_w: int, w: int
 
 
 def crop_filter(cfg: Config, video: Path, clip: dict,
-                keeps: list[tuple[float, float]] | None = None) -> str:
+                keeps: list[tuple[float, float]] | None = None,
+                reframe_track: list[dict] | None = None) -> str:
     info = ffprobe_video(video)
     w, h = info["width"], info["height"]
 
@@ -228,6 +229,24 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
     h -= bot_px
 
     target_ar = cfg.out_width / cfg.out_height          # 9/16
+
+    # subject-following reframe track (auto-generated or hand-edited) drives
+    # the whole crop when present: a fixed-zoom 9:16 window panning over time
+    # onto the subject. Unlike the face-crop path below it also punches IN
+    # (zoom) and pans vertically, and it runs on already-vertical sources too
+    # (where the old path just padded and never reframed). Reuses the same
+    # watermark-trim prefix and jump-cut time-remap.
+    if reframe_track:
+        from .. import reframe
+        remap = None
+        if keeps:
+            from ..edits import remap_time
+            remap = lambda t: remap_time(t, keeps)
+        body = reframe.crop_chain(reframe_track, w, h, cfg.out_width,
+                                  cfg.out_height, remap=remap)
+        if body is not None:
+            return watermark_trim + body
+        # None = no-op on an already-vertical source: fall through to pad
 
     if w / h <= target_ar + 0.01:                       # already narrow: pad
         return (f"{watermark_trim}scale={cfg.out_width}:-2,"
@@ -311,7 +330,13 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
     write_ass(caption_words, ass_file, style=cfg.style,
               preset=cfg.caption_preset, position=cfg.caption_position)
 
-    vf = crop_filter(cfg, video, clip, keeps)
+    # a hand-edited or auto-generated reframe track lives beside the clip;
+    # if present it drives the crop (subject-following zoom+pan)
+    from ..util import read_json
+    reframe_file = clip_dir / "reframe.json"
+    reframe_track = read_json(reframe_file) if reframe_file.exists() else None
+
+    vf = crop_filter(cfg, video, clip, keeps, reframe_track=reframe_track)
     with_captions = cfg.style != "none" and caption_words
     # ffmpeg is run with cwd=clip_dir so the ass filter gets a plain relative
     # filename -- avoids Windows drive-colon escaping issues in filtergraphs.
