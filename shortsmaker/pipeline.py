@@ -279,3 +279,69 @@ def run(cfg: Config, progress=None) -> dict:
     log.info("=== done: %d/%d clips OK | SaaS equivalent ~%s credits saved | %s ===",
              ok, len(manifest_clips), ledger.total, run_dir / "manifest.json")
     return manifest
+
+
+def rerender_clip(run_dir: Path, clip_name: str, redo_script: bool = False) -> dict:
+    """Re-render ONE clip from a finished run's cached artifacts -- used by the
+    web editor after a reframe-track or custom-script edit, so a tweak costs
+    one clip's ffmpeg pass, not a whole pipeline re-run.
+
+    Reads the run's saved config + transcript; recomputes keeps the same way
+    run() does; reuses the clip's on-disk reframe.json / custom_script.txt
+    (whatever the editor just wrote). redo_script=True also clears the cached
+    script/beats/voiceover so the narration is regenerated (a script edit);
+    a pure reframe edit leaves the voiceover untouched and only re-runs
+    assemble. Returns the updated manifest clip entry.
+    """
+    cfg = Config.load(run_dir / "config.json")
+    cfg.force = True
+    transcript = read_json(run_dir / "transcript.json")
+    meta = read_json(run_dir / "meta.json") if (run_dir / "meta.json").exists() else {}
+    manifest = read_json(run_dir / "manifest.json")
+    entry = next((c for c in manifest["clips"] if c.get("clip") == clip_name), None)
+    if entry is None:
+        raise ValueError(f"clip {clip_name} not in manifest")
+
+    video = (run_dir / "normalized.mp4")
+    if not video.is_file():
+        video = ingest.run(cfg)          # falls back to re-resolving the source
+    clip_dir = run_dir / "clips" / clip_name
+
+    text, _, _ = highlights._window_texts(transcript["segments"],
+                                          entry["start"], entry["end"])
+    clip = {"start": entry["start"], "end": entry["end"], "score": entry.get("score", 1.0),
+            "signals": entry.get("signals", {}), "text": text,
+            "reason": entry.get("reason", "")}
+
+    words_rel = source_caption_words(transcript, clip)
+    keeps = None
+    if cfg.trim_silence != "off":
+        keeps = edits.plan_cuts(words_rel, clip["end"] - clip["start"],
+                                max_gap=cfg.silence_gap)
+    if keeps:
+        clip = dict(clip, edited_duration=edits.edited_duration(keeps))
+
+    if redo_script:
+        for f in ("script.txt", "beats.json", "voiceover.mp3", "vo_words.json"):
+            (clip_dir / f).unlink(missing_ok=True)
+    (clip_dir / "final.mp4").unlink(missing_ok=True)
+
+    if cfg.voiceover:
+        context = script_gen.clip_context(transcript, clip, meta)
+        clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
+        beats = (edits.plan_beats(transcript["segments"], clip["start"], clip["end"],
+                                  keeps, span=script_gen.BEAT_SPAN)
+                 if clip_len >= script_gen.BEAT_THRESHOLD else None)
+        script = script_gen.run(cfg, clip, clip_dir, context, beats)
+        entry["script"] = script
+        vo_audio, caption_words = tts.run(cfg, script, clip, clip_dir)
+    else:
+        vo_audio = None
+        caption_words = (edits.remap_words(words_rel, keeps) if keeps else words_rel)
+
+    final = assemble.run(cfg, video, clip, clip_dir, vo_audio, caption_words, keeps)
+    entry["file"] = str(final.relative_to(run_dir))
+    entry["thumbs"] = assemble.thumbnails(final, clip_dir)
+    entry["status"] = "ok"
+    write_json(run_dir / "manifest.json", manifest)
+    return entry

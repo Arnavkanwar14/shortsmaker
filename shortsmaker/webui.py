@@ -11,7 +11,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -94,6 +94,7 @@ async def create_job(
     reframe_style: str = Form("tight"),
     whole_clip: str = Form("false"),
     trim_bottom_pct: float = Form(0.0),
+    custom_script: str = Form(""),
 ):
     # batch mode: one job per URL line; upload = single job
     urls = [u.strip() for u in url.splitlines() if u.strip()]
@@ -126,7 +127,8 @@ async def create_job(
                      tts_engine=tts_engine, kokoro_voice=kokoro_voice,
                      reframe_style=reframe_style,
                      whole_clip=whole_clip.lower() in ("1", "true", "yes"),
-                     trim_bottom_pct=trim_bottom_pct)
+                     trim_bottom_pct=trim_bottom_pct,
+                     custom_script=custom_script.strip())
         cfg.min_duration = max(duration - 15, 15)
         cfg.max_duration = duration + 15
         cfg.run_id = derive_run_id(cfg.input)
@@ -279,6 +281,95 @@ def voices():
         "en-IN-PrabhatNeural", "en-IN-NeerjaNeural", "hi-IN-MadhurNeural",
         "hi-IN-SwaraNeural",
     ]
+
+
+# ------------------------------------------------------- per-clip editor
+def _locked_rerender(run_dir: Path, clip: str, redo_script: bool):
+    """Re-render one clip, but never block: the pipeline runs one job at a
+    time, so if a full run is in progress, fail fast with a clear message
+    instead of hanging until the connection times out (a real bug hit when
+    editing during a run)."""
+    from .pipeline import rerender_clip
+    if not JOB_LOCK.acquire(timeout=1.0):
+        raise HTTPException(409, "a run is in progress -- wait for it to "
+                                 "finish, then save your edit")
+    try:
+        entry = rerender_clip(run_dir, clip, redo_script=redo_script)
+    finally:
+        JOB_LOCK.release()
+    return _clip_urls([entry], run_dir.name)[0]
+
+
+def _run_dir(run_id: str) -> Path:
+    if "/" in run_id or "\\" in run_id or run_id.startswith((".", "_")):
+        raise HTTPException(400, "bad run id")
+    d = RUNS_DIR / run_id
+    if not (d / "manifest.json").is_file():
+        raise HTTPException(404, "unknown run")
+    return d
+
+
+@app.get("/api/run/{run_id}/clip/{clip}/edit")
+def clip_edit_data(run_id: str, clip: str):
+    """Everything the in-browser editor needs: source video URL + dimensions,
+    the clip's time window, the current reframe track and script."""
+    import json
+    from .util import ffprobe_video
+    run_dir = _run_dir(run_id)
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    entry = next((c for c in manifest["clips"] if c.get("clip") == clip), None)
+    if entry is None:
+        raise HTTPException(404, "unknown clip")
+    clip_dir = run_dir / "clips" / clip
+    src = run_dir / "normalized.mp4"
+    info = ffprobe_video(str(src)) if src.is_file() else {"width": 0, "height": 0}
+    track_f = clip_dir / "reframe.json"
+    script_f = clip_dir / "custom_script.txt"
+    if not script_f.exists():
+        script_f = clip_dir / "script.txt"
+    return {
+        "source_url": f"/runs/{run_id}/normalized.mp4",
+        "src_w": info["width"], "src_h": info["height"],
+        "start": entry["start"], "end": entry["end"],
+        "out_w": 1080, "out_h": 1920,
+        "reframe": json.loads(track_f.read_text(encoding="utf-8")) if track_f.exists() else [],
+        "script": script_f.read_text(encoding="utf-8") if script_f.exists() else "",
+    }
+
+
+@app.post("/api/run/{run_id}/clip/{clip}/reframe")
+def save_reframe(run_id: str, clip: str, body: dict = Body(...)):
+    """Save a hand-edited reframe track and re-render just this clip (no
+    voiceover regeneration -- framing only)."""
+    import json
+    run_dir = _run_dir(run_id)
+    track = body.get("track")
+    if not isinstance(track, list) or not track:
+        raise HTTPException(400, "track must be a non-empty list")
+    for k in track:
+        if not all(x in k for x in ("t", "zoom", "cx", "cy")):
+            raise HTTPException(400, "each keyframe needs t, zoom, cx, cy")
+    clip_dir = run_dir / "clips" / clip
+    if not clip_dir.is_dir():
+        raise HTTPException(404, "unknown clip")
+    (clip_dir / "reframe.json").write_text(json.dumps(track), encoding="utf-8")
+    return _locked_rerender(run_dir, clip, redo_script=False)
+
+
+@app.post("/api/run/{run_id}/clip/{clip}/script")
+def save_script(run_id: str, clip: str, body: dict = Body(...)):
+    """Save a custom narration script and re-voice + re-render this clip."""
+    run_dir = _run_dir(run_id)
+    script = (body.get("script") or "").strip()
+    clip_dir = run_dir / "clips" / clip
+    if not clip_dir.is_dir():
+        raise HTTPException(404, "unknown clip")
+    if script:
+        (clip_dir / "custom_script.txt").write_text(script, encoding="utf-8")
+    else:
+        # empty = revert to the AI-generated script
+        (clip_dir / "custom_script.txt").unlink(missing_ok=True)
+    return _locked_rerender(run_dir, clip, redo_script=True)
 
 
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
