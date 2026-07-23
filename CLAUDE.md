@@ -194,3 +194,19 @@ If a new garbled name shows up in the wild, check which layer should
 have caught it: a spelling variant -> names.py should already handle
 it (verify CUTOFF=0.80 isn't too strict); a totally different word ->
 that's the prompt-instruction's job, not names.py's.
+
+## Subject-following reframe / auto lock-on (shortsmaker/reframe.py)
+Framing is no longer face-detection-only. Each clip gets a reframe.json
+track {t,zoom,cx,cy} auto-generated from opencv SALIENCY (not human faces
+-- works on Pokemon, GTA, anything), and assemble's crop_filter renders a
+fixed-zoom 9:16 window that pans to follow the subject + punches in when
+it's small/off-centre. KEY FACT verified the hard way: the user's inputs
+are LANDSCAPE (1920x1080 /watch/ videos) made into vertical reels -- that
+IS the crop path. (Already-vertical 608x1080 sources hit crop_chain's
+None no-op and just pad, as before, unless a punch-in track says otherwise.)
+reframe.json is generated only when missing so a hand-edit is never
+clobbered; delete it to re-detect. auto_track is deliberately conservative
+(full-frame on establishing shots with no confident subject). Verify any
+change by RENDERING a real clip and looking at frames, never by logs --
+the whole feature is about pixels. Still TODO: visual timeline editor to
+review/adjust the track, and custom-script input for TTS.
