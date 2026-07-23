@@ -59,6 +59,10 @@ class Config:
                                     # bit under natural TTS pace (~2.5+) so
                                     # the voiceover rarely needs speeding up
                                     # to fit (see tts.py's fit-check)
+    custom_script: str = ""         # user-supplied narration; when set it
+                                    # REPLACES the LLM script (no Groq call).
+                                    # For the single-clip / whole_clip case;
+                                    # per-clip edits use clips/NN/custom_script.txt
 
     # ---- TTS / voiceover ----
     voiceover: bool = True          # off: keep original audio, captions come

@@ -198,6 +198,12 @@ def run(cfg: Config, progress=None) -> dict:
                 entry["edited_duration"] = clip["edited_duration"]
 
             if cfg.voiceover:
+                # up-front custom script (whole-job) seeds this clip's
+                # per-clip file unless one's already there (a UI edit wins)
+                if cfg.custom_script.strip():
+                    cf = clip_dir / "custom_script.txt"
+                    if not cf.exists():
+                        cf.write_text(cfg.custom_script.strip(), encoding="utf-8")
                 context = script_gen.clip_context(transcript, clip, meta)
                 clip_len = clip.get("edited_duration") or (clip["end"] - clip["start"])
                 beats = (edits.plan_beats(transcript["segments"], clip["start"],

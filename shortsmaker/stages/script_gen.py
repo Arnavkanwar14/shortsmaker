@@ -211,6 +211,41 @@ def _parse_beats(reply: str, n: int) -> list[str] | None:
     return parts if len(parts) == n else None
 
 
+def _distribute_to_beats(text: str, beats: list[dict]) -> list[str]:
+    """Spread a user-supplied prose script across the timed beats so a custom
+    voiceover stays timeline-synced (same reason the LLM path is per-beat).
+    Sentences are spread proportionally to each beat's DURATION across the
+    whole clip -- not greedily packed into the first beat -- so a short
+    custom script still plays across the whole clip instead of finishing in
+    the first few seconds. Whole sentences are kept intact; the last beat
+    sweeps up any remainder so nothing is dropped."""
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+    if not sentences:
+        return ["" for _ in beats]
+    total_words = sum(len(s.split()) for s in sentences)
+    total_dur = sum(max(b["end"] - b["start"], 0.1) for b in beats)
+
+    out, si, cum_words, cum_target = [], 0, 0, 0.0
+    for i, b in enumerate(beats):
+        if i == len(beats) - 1:                 # last beat takes the rest
+            out.append(" ".join(sentences[si:]))
+            break
+        cum_target += total_words * (max(b["end"] - b["start"], 0.1) / total_dur)
+        taken = []
+        # fill this beat until we've reached its proportional share of words,
+        # but always leave at least one sentence per remaining beat
+        remaining_beats = len(beats) - i - 1
+        while (si < len(sentences) - remaining_beats
+               and (not taken or cum_words < cum_target)):
+            taken.append(sentences[si])
+            cum_words += len(sentences[si].split())
+            si += 1
+        out.append(" ".join(taken))
+    while len(out) < len(beats):
+        out.append("")
+    return out
+
+
 def _clean(text: str) -> str:
     text = re.sub(r"^(here('s| is).*?:|script:|voiceover:)\s*", "", text,
                   flags=re.I | re.S)
@@ -263,17 +298,29 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
     context = context or {}
     duration = clip.get("edited_duration") or (clip["end"] - clip["start"])
 
+    # user-supplied script: clip_dir/custom_script.txt (written by the UI or
+    # by the pipeline from cfg.custom_script) fully replaces the LLM -- no
+    # Groq call. Still routed through beat-splitting (to stay synced),
+    # name-correction and punctuation like any other narration.
+    custom_file = clip_dir / "custom_script.txt"
+    custom = custom_file.read_text(encoding="utf-8").strip() if custom_file.exists() else ""
+
     if beats:
-        max_tokens = sum(max(int((b["end"] - b["start"]) * BEAT_WORDS_PER_SECOND), 4)
-                         for b in beats) * 3
-        reply = llm.complete(cfg, _beat_prompt(cfg, beats, context),
-                             system=SYSTEM, max_tokens=max_tokens)
-        parsed = _parse_beats(reply, len(beats)) if reply else None
-        if parsed is None:
-            log.info("beat-mode LLM reply unusable -- using per-beat template fallback")
-            parsed = [_fallback_script(
-                b["text"], max(int((b["end"] - b["start"]) * BEAT_WORDS_PER_SECOND), 6))
-                for b in beats]
+        if custom:
+            log.info("using custom script (%d words) distributed across %d beats",
+                     len(custom.split()), len(beats))
+            parsed = _distribute_to_beats(custom, beats)
+        else:
+            max_tokens = sum(max(int((b["end"] - b["start"]) * BEAT_WORDS_PER_SECOND), 4)
+                             for b in beats) * 3
+            reply = llm.complete(cfg, _beat_prompt(cfg, beats, context),
+                                 system=SYSTEM, max_tokens=max_tokens)
+            parsed = _parse_beats(reply, len(beats)) if reply else None
+            if parsed is None:
+                log.info("beat-mode LLM reply unusable -- using per-beat template fallback")
+                parsed = [_fallback_script(
+                    b["text"], max(int((b["end"] - b["start"]) * BEAT_WORDS_PER_SECOND), 6))
+                    for b in beats]
 
         for b, text in zip(beats, parsed):
             beat_dur = max(b["end"] - b["start"], 1.0)
@@ -310,9 +357,13 @@ def run(cfg: Config, clip: dict, clip_dir, context: dict | None = None,
 
     # ---- single continuous block (short clips only) ----
     max_words = int(duration * cfg.words_per_second)
-    reply = llm.complete(cfg, _prompt(cfg, clip, duration, context),
-                         system=SYSTEM, max_tokens=max_words * 3)
-    script = _clean(reply) if reply else ""
+    if custom:
+        log.info("using custom script (%d words) for short clip", len(custom.split()))
+        script = custom
+    else:
+        reply = llm.complete(cfg, _prompt(cfg, clip, duration, context),
+                             system=SYSTEM, max_tokens=max_words * 3)
+        script = _clean(reply) if reply else ""
 
     if not script:
         log.info("no LLM available -- using template fallback script")
