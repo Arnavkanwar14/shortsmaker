@@ -14,7 +14,7 @@ from pathlib import Path
 from . import edits, names, reframe
 from .config import Config
 from .stages import assemble, cleanup, highlights, ingest, script_gen, transcribe, tts
-from .util import CostLedger, media_duration, read_json, write_json
+from .util import CostLedger, ffprobe_video, media_duration, read_json, write_json
 
 log = logging.getLogger("shortsmaker")
 
@@ -228,11 +228,19 @@ def run(cfg: Config, progress=None) -> dict:
             # only generate when missing: never clobber a hand-edited track,
             # and re-detection is deterministic so there's nothing to gain by
             # regenerating. To force fresh detection, delete reframe.json.
-            if cfg.face_crop:
+            # re-voice-as-is (whole_clip) leaves the finished short's framing
+            # completely alone -- no lock-on, no zoom. Auto-reframe only runs
+            # when we're actually cutting a reel out of a longer video.
+            if cfg.face_crop and not cfg.whole_clip:
                 reframe_file = clip_dir / "reframe.json"
                 if not reframe_file.exists():
-                    subs = reframe.detect_subjects(video, clip["start"], clip["end"])
-                    track = reframe.auto_track(subs, clip["end"] - clip["start"])
+                    scenes_file = run_dir / "scenes.json"
+                    cuts = read_json(scenes_file) if scenes_file.exists() else []
+                    info = ffprobe_video(video)
+                    subs = reframe.detect_subjects(video, clip["start"], clip["end"],
+                                                   cuts=cuts)
+                    track = reframe.auto_track(subs, clip["end"] - clip["start"],
+                                               src_w=info["width"], src_h=info["height"])
                     write_json(reframe_file, track)
 
             final = assemble.run(cfg, video, clip, clip_dir, vo_audio,

@@ -262,10 +262,23 @@
     border-radius: var(--r-ctl); padding: 10px 18px; cursor: pointer; font-family: inherit;
     font-size: 13px; }
   .ed-box .ed-ghost { background: none; border: 1px solid var(--hairline); }
-  .ed-busy { display: none; text-align: center; padding: 14px; color: var(--mid);
-    font-size: 13px; border-top: 1px solid var(--hairline); }
-  #editor.busy .ed-busy { display: block; }
-  #editor.busy .ed-box button { opacity: .5; pointer-events: none; }
+  .ed-status { font-size: 12px; font-weight: 600; margin: 10px 0 4px;
+    padding: 7px 11px; border-radius: var(--r-ctl); background: var(--canvas);
+    color: var(--mid); }
+  .ed-status.editing { background: #fff2f2; color: #e7000b; }
+  .ed-scrub-wrap { position: relative; margin-top: 10px; }
+  #edMarks { position: relative; height: 8px; margin-top: 2px; }
+  #edMarks i { position: absolute; top: 0; width: 2px; height: 8px;
+    background: var(--ink); transform: translateX(-1px); border-radius: 1px; }
+  .ed-busy { display: none; align-items: center; justify-content: center; gap: 12px;
+    text-align: center; padding: 16px; color: var(--ink); font-size: 13px;
+    font-weight: 600; border-top: 1px solid var(--hairline); }
+  #editor.busy .ed-busy { display: flex; }
+  #editor.busy .ed-box button, #editor.busy .ed-box input,
+  #editor.busy .ed-box textarea { opacity: .45; pointer-events: none; }
+  .ed-spin { width: 18px; height: 18px; border: 2px solid var(--hairline);
+    border-top-color: var(--ink); border-radius: 50%; animation: edspin .8s linear infinite; }
+  @keyframes edspin { to { transform: rotate(360deg); } }
 
   /* -------------------------------------------------------------- toast */
   #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -502,20 +515,24 @@
           <video id="edVideo" preload="auto"></video>
           <div id="edBox"><span class="ed-grip"></span></div>
         </div>
+        <div id="edStatus" class="ed-status">following auto lock-on &mdash; play to preview</div>
         <div class="ed-controls">
-          <button id="edPlay" onclick="edTogglePlay()">play</button>
-          <label>zoom <input id="edZoom" type="range" min="1" max="1.6" step="0.02" value="1" oninput="edZoomInput()"></label>
+          <button id="edPlay" onclick="edTogglePlay()">&#9654; play</button>
+          <label>zoom <input id="edZoom" type="range" min="1" max="1.4" step="0.02" value="1" oninput="edZoomInput()"></label>
           <span id="edTime" class="ed-time">0.0s</span>
         </div>
-        <input id="edScrub" type="range" min="0" max="1000" value="0" oninput="edScrubInput()">
+        <div class="ed-scrub-wrap">
+          <input id="edScrub" type="range" min="0" max="1000" value="0" oninput="edScrubInput()">
+          <div id="edMarks"></div>
+        </div>
         <div class="ed-kf-row">
-          <button onclick="edSetKeyframe()">${'set keyframe here'}</button>
-          <button onclick="edClearKeyframes()" class="ed-ghost">clear my edits</button>
+          <button class="primary" onclick="edSetKeyframe()">&#9679; pin framing here</button>
+          <button onclick="edRevertAuto()" class="ed-ghost">revert to auto</button>
           <span id="edKfInfo" class="ed-hint"></span>
         </div>
-        <p class="ed-hint">Drag the box to move it, or use the zoom slider. Scrub to a moment, adjust, then <b>set keyframe here</b> &mdash; the crop glides between your keyframes. Auto lock-on already filled a starting track; only touch the moments it gets wrong.</p>
+        <p class="ed-hint">The red box is the part kept as your vertical reel. It follows the auto lock-on as the video plays. To fix a moment: <b>scrub</b> to it, <b>drag</b> the box where you want it, then <b>pin framing here</b>. Repeat for other moments &mdash; the crop glides between your pins. Marks under the bar show your pins.</p>
         <div class="ed-actions">
-          <button id="edSaveFrame" class="primary" onclick="edSaveFraming()">save framing &amp; re-render</button>
+          <button id="edSaveFrame" class="primary" onclick="edSaveFraming()">save framing &amp; re-render clip</button>
         </div>
       </div>
       <div class="ed-right">
@@ -527,7 +544,7 @@
         <p class="ed-hint">Re-voicing regenerates the audio for this clip only (no Groq call &mdash; your words go straight to TTS). Clearing the box reverts to the AI script.</p>
       </div>
     </div>
-    <div id="edBusy" class="ed-busy">rendering&hellip; this takes a moment</div>
+    <div id="edBusy" class="ed-busy"><span class="ed-spin"></span> re-rendering this clip&hellip; ~15&ndash;30s, please wait</div>
   </div>
 </div>
 
@@ -650,7 +667,7 @@ function edRenderBox() {
   const W = stage.clientWidth, H = stage.clientHeight;
   const { bw, bh } = edBaseFrac();
   const cur = edCurrent();
-  const z = Math.max(1, Math.min(cur.zoom, 1.6));
+  const z = Math.max(1, Math.min(cur.zoom, 1.4));
   const wFrac = bw / z, hFrac = bh / z;
   const left = Math.max(0, Math.min(cur.cx - wFrac / 2, 1 - wFrac));
   const top = Math.max(0, Math.min(cur.cy - hFrac / 2, 1 - hFrac));
@@ -663,6 +680,19 @@ function edRenderBox() {
   $('edTime').textContent = t.toFixed(1) + 's';
   $('edScrub').value = Math.round((t / ed.dur) * 1000) || 0;
   if (!ed.editing) $('edZoom').value = z.toFixed(2);
+  const st = $('edStatus');
+  if (ed.editing) { st.className = 'ed-status editing'; st.textContent = 'editing this moment — drag/zoom, then "pin framing here" to keep it'; }
+  else { st.className = 'ed-status'; st.textContent = 'following auto lock-on — scrub or play to preview'; }
+}
+
+function edRenderMarks() {
+  const marks = $('edMarks');
+  const pins = ed.pins || [];
+  marks.innerHTML = pins.map(t =>
+    `<i style="left:${(t / ed.dur * 100).toFixed(1)}%"></i>`).join('');
+  $('edKfInfo').textContent = pins.length
+    ? (pins.length + ' pin' + (pins.length !== 1 ? 's' : '') + ' (auto elsewhere)')
+    : 'auto lock-on';
 }
 
 function edLoop() {
@@ -678,13 +708,14 @@ async function openEditor(runId, clip) {
     if (!r.ok) throw new Error(await r.text());
     const d = await r.json();
     ed = { runId, clip, track: d.reframe.length ? d.reframe : [{ t: 0, zoom: 1, cx: 0.5, cy: 0.5 }],
+           autoTrack: JSON.parse(JSON.stringify(d.reframe.length ? d.reframe : [{ t: 0, zoom: 1, cx: 0.5, cy: 0.5 }])),
            start: d.start, end: d.end, dur: Math.max(d.end - d.start, 0.1),
-           srcW: d.src_w || 16, srcH: d.src_h || 9, editing: false,
+           srcW: d.src_w || 16, srcH: d.src_h || 9, editing: false, userPinned: false,
            pending: { zoom: 1, cx: 0.5, cy: 0.5 }, raf: 0 };
     $('edScript').value = d.script || '';
     const v = $('edVideo');
     v.src = d.source_url;
-    v.onloadedmetadata = () => { v.currentTime = ed.start; edRenderBox(); };
+    v.onloadedmetadata = () => { v.currentTime = ed.start; edRenderBox(); edRenderMarks(); };
     $('editor').classList.add('show');
     cancelAnimationFrame(ed.raf);
     ed.raf = requestAnimationFrame(edLoop);
@@ -727,20 +758,27 @@ function edSetKeyframe() {
   const t = Math.max(0, Math.min(v.currentTime - ed.start, ed.dur));
   const kf = { t: +t.toFixed(2), zoom: +ed.pending.zoom.toFixed(3),
                cx: +ed.pending.cx.toFixed(4), cy: +ed.pending.cy.toFixed(4) };
-  ed.track = ed.track.filter(k => Math.abs(k.t - kf.t) > 0.25);
+  // upsert into the working track (which starts as the auto track), so
+  // auto-following elsewhere is KEPT and only this moment is overridden
+  ed.track = ed.track.filter(k => Math.abs(k.t - kf.t) > 0.4);
   ed.track.push(kf);
   ed.track.sort((a, b) => a.t - b.t);
+  ed.pins = (ed.pins || []).filter(t => Math.abs(t - kf.t) > 0.4).concat(kf.t).sort((a, b) => a - b);
+  ed.userPinned = true;
   ed.editing = false;
-  $('edKfInfo').textContent = ed.track.length + ' keyframe' + (ed.track.length !== 1 ? 's' : '');
   edRenderBox();
-  toast('keyframe set at ' + kf.t.toFixed(1) + 's');
+  edRenderMarks();
+  toast('framing pinned at ' + kf.t.toFixed(1) + 's');
 }
 
-function edClearKeyframes() {
-  ed.track = [{ t: 0, zoom: 1, cx: 0.5, cy: 0.5 }];
+function edRevertAuto() {
+  ed.track = JSON.parse(JSON.stringify(ed.autoTrack));
+  ed.pins = [];
+  ed.userPinned = false;
   ed.editing = false;
-  $('edKfInfo').textContent = 'cleared';
   edRenderBox();
+  edRenderMarks();
+  toast('reverted to auto lock-on');
 }
 
 // drag the crop box to reposition
