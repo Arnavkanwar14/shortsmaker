@@ -79,11 +79,17 @@ def _groq(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
+    body = {"model": cfg.groq_model, "messages": messages,
+            "max_tokens": max_tokens, "temperature": 0.8}
+    if "gpt-oss" in cfg.groq_model:
+        # reasoning model -- without this it can spend the max_tokens budget
+        # on invisible reasoning tokens and return truncated/empty content.
+        # "low" keeps it fast and leaves the budget for actual output.
+        body["reasoning_effort"] = "low"
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {groq_api_key()}"},
-        json={"model": cfg.groq_model, "messages": messages,
-              "max_tokens": max_tokens, "temperature": 0.8},
+        json=body,
         timeout=120,
     )
     r.raise_for_status()

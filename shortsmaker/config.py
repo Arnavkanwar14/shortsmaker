@@ -53,7 +53,9 @@ class Config:
     llm_provider: str = "auto"      # auto | ollama | groq | gemini | none
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
-    groq_model: str = "llama-3.3-70b-versatile"   # free tier, needs GROQ_API_KEY
+    groq_model: str = "openai/gpt-oss-120b"        # free tier, needs GROQ_API_KEY
+                                    # (llama-3.3-70b-versatile was retired by
+                                    # Groq -- see CLAUDE.md if this 404s again)
     gemini_model: str = "gemini-2.0-flash"        # free tier, needs GEMINI_API_KEY
     words_per_second: float = 2.2   # script length budget -- deliberately a
                                     # bit under natural TTS pace (~2.5+) so
