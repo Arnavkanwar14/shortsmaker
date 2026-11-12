@@ -210,3 +210,6 @@ clobbered; delete it to re-detect. auto_track is deliberately conservative
 change by RENDERING a real clip and looking at frames, never by logs --
 the whole feature is about pixels. Still TODO: visual timeline editor to
 review/adjust the track, and custom-script input for TTS.
+
+## SupoClip comparison (2026-11-13)
+docs/COMPARISON.md lists what to borrow from SupoClip; its AssemblyAI transcription, per-window LLM calls + rerank, retry loops and Next.js/Redis/Postgres stack are rejected (paid / break the Groq budget rule / single-user tool) -- do not re-propose them.
