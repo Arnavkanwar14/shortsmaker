@@ -27,6 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--run-id", dest="run_id", help="reuse an existing run folder")
     r.add_argument("--num-clips", dest="num_clips", type=int)
     r.add_argument("--duration", type=int, help="target clip seconds (30-60)")
+    r.add_argument("--clip-length", dest="clip_length",
+                   choices=["auto", "short", "medium", "long"],
+                   help="length preset; overrides --duration")
     r.add_argument("--voice", help="edge-tts voice, e.g. en-US-GuyNeural")
     r.add_argument("--voiceover", type=lambda s: s.lower() in ("1", "true", "yes"),
                    help="true/false: AI voiceover; false keeps original audio "
@@ -95,9 +98,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     overrides = {k: v for k, v in vars(args).items()
                  if k not in ("command", "config", "verbose")}
     cfg.apply_overrides(overrides)
-    if cfg.duration:
-        cfg.min_duration = max(cfg.duration - 15, 15)
-        cfg.max_duration = cfg.duration + 15
+    cfg.apply_length()
 
     from .pipeline import run
     manifest = run(cfg)

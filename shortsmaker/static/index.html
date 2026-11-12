@@ -334,7 +334,15 @@
         <div class="row" style="margin-top:16px">
           <div><div class="section-label" style="margin-top:0">Clips</div>
             <input type="number" id="num_clips" min="1" max="10" value="3"></div>
-          <div><div class="section-label" style="margin-top:0">Target length (s)</div>
+          <div><div class="section-label" style="margin-top:0">Clip length</div>
+            <select id="clip_length" onchange="$('duration').parentElement.style.display = this.value ? 'none' : ''">
+              <option value="auto">Auto (15-60s)</option>
+              <option value="short">Short (15-30s)</option>
+              <option value="medium">Medium (30-60s)</option>
+              <option value="long">Long (1-2 min)</option>
+              <option value="">Custom target</option>
+            </select></div>
+          <div style="display:none"><div class="section-label" style="margin-top:0">Target length (s)</div>
             <input type="number" id="duration" min="20" max="90" value="45"></div>
         </div>
         </div>
@@ -844,7 +852,7 @@ function toast(msg) {
 }
 
 // remember the user's settings between visits
-const SAVED_FIELDS = ['num_clips','duration','voice','style','llm_provider',
+const SAVED_FIELDS = ['num_clips','duration','clip_length','voice','style','llm_provider',
   'whisper_model','content_type','trim_silence','caption_preset',
   'caption_position','tts_engine','kokoro_voice','reframe_style','trim_bottom'];
 function saveSettings() {
@@ -859,6 +867,7 @@ function restoreSettings() {
       if (s[k] != null && $(k).querySelector?.(`option[value="${s[k]}"]`) !== null)
         $(k).value = s[k];
     if (s._voMode) setMode(true);
+    $('clip_length').onchange();
     engineToggle();
   } catch (e) { /* corrupted storage: defaults win */ }
 }
@@ -896,7 +905,7 @@ $('go').onclick = async () => {
   const fd = new FormData();
   fd.append('url', $('url').value.trim());
   if (pickedFile) fd.append('file', pickedFile);
-  for (const k of ['num_clips','duration','voice','style','llm_provider',
+  for (const k of ['num_clips','duration','clip_length','voice','style','llm_provider',
                    'whisper_model','content_type','trim_silence',
                    'focus','manual_clips','caption_preset','caption_position',
                    'tts_engine','kokoro_voice','reframe_style'])
@@ -989,7 +998,11 @@ function clipCard(c, runId) {
   const m = c.metadata;
   const scoreLine = v
     ? `<div class="stat-row"><div class="stat"><b>${v.viral}</b><span>viral</span></div>` +
-      (v.hook != null ? `<div class="stat"><b>${v.hook}</b><span>hook</span></div>
+      (v.peak != null ? `<div class="stat"><b>${v.hook}</b><span>hook /25</span></div>
+        <div class="stat"><b>${v.peak}</b><span>peak</span></div>
+        <div class="stat"><b>${v.coherence}</b><span>coherence</span></div>
+        <div class="stat"><b>${v.payoff}</b><span>payoff</span></div>`
+      : v.hook != null ? `<div class="stat"><b>${v.hook}</b><span>hook</span></div>
         <div class="stat"><b>${v.flow}</b><span>flow</span></div>
         <div class="stat"><b>${v.value}</b><span>value</span></div>` : '') + `</div>`
     : `<div class="reason">score ${c.score}</div>`;

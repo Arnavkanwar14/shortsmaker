@@ -20,8 +20,14 @@ class Config:
     run_id: str = ""                # derived from input if empty
     num_clips: int = 5
     duration: int = 45              # target clip length, seconds
-    min_duration: int = 30
+    min_duration: int = 30          # hard range a finished clip may fall in
     max_duration: int = 60
+    clip_length: str = ""           # "" (use duration +/-15) | auto | short |
+                                    # medium | long -- see LENGTH_PRESETS
+    ideal_min_duration: int = 0     # candidate windows are built inside the
+    ideal_max_duration: int = 0     # ideal range (0 = derive from min/max);
+                                    # the gap up to the hard range is the room
+                                    # sentence-boundary snapping needs
 
     # ---- ingest ----
     target_fps: int = 30
@@ -129,6 +135,29 @@ class Config:
         for k, v in overrides.items():
             if v is not None and hasattr(self, k):
                 setattr(self, k, v)
+
+    def apply_length(self) -> None:
+        """Set the hard + ideal duration ranges from clip_length (a preset)
+        or, when that is empty, from the numeric target `duration`."""
+        if self.clip_length in LENGTH_PRESETS:
+            lo, hi, ilo, ihi = LENGTH_PRESETS[self.clip_length]
+            self.min_duration, self.max_duration = lo, hi
+            self.ideal_min_duration, self.ideal_max_duration = ilo, ihi
+            self.duration = (ilo + ihi) // 2
+        elif self.duration:
+            self.clip_length = ""
+            self.min_duration = max(self.duration - 15, 15)
+            self.max_duration = self.duration + 15
+            self.ideal_min_duration = self.ideal_max_duration = 0
+
+
+# clip_length presets: (hard min, hard max, ideal min, ideal max) seconds
+LENGTH_PRESETS = {
+    "auto":   (15, 60, 25, 50),
+    "short":  (15, 30, 18, 25),
+    "medium": (30, 60, 35, 55),
+    "long":   (60, 120, 75, 110),
+}
 
 
 def _load_dotenv() -> None:

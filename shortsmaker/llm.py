@@ -46,19 +46,21 @@ def provider_available(cfg: Config) -> str:
     return ""
 
 
-def complete(cfg: Config, prompt: str, system: str = "", max_tokens: int = 1024) -> str:
+def complete(cfg: Config, prompt: str, system: str = "", max_tokens: int = 1024,
+             temperature: float = 0.8) -> str:
     provider = provider_available(cfg)
     if not provider:
         return ""
     try:
         fn = {"ollama": _ollama, "groq": _groq, "gemini": _gemini}[provider]
-        return fn(cfg, prompt, system, max_tokens)
+        return fn(cfg, prompt, system, max_tokens, temperature)
     except Exception as e:  # LLM failure must never kill the pipeline
         log.warning("LLM call failed (%s): %s", provider, e)
         return ""
 
 
-def _ollama(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
+def _ollama(cfg: Config, prompt: str, system: str, max_tokens: int,
+            temperature: float = 0.8) -> str:
     r = requests.post(
         f"{cfg.ollama_url}/api/generate",
         json={
@@ -66,7 +68,7 @@ def _ollama(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
             "prompt": prompt,
             "system": system,
             "stream": False,
-            "options": {"num_predict": max_tokens, "temperature": 0.8},
+            "options": {"num_predict": max_tokens, "temperature": temperature},
         },
         timeout=300,
     )
@@ -74,13 +76,14 @@ def _ollama(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
     return r.json().get("response", "").strip()
 
 
-def _groq(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
+def _groq(cfg: Config, prompt: str, system: str, max_tokens: int,
+          temperature: float = 0.8) -> str:
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     body = {"model": cfg.groq_model, "messages": messages,
-            "max_tokens": max_tokens, "temperature": 0.8}
+            "max_tokens": max_tokens, "temperature": temperature}
     if "gpt-oss" in cfg.groq_model:
         # reasoning model -- without this it can spend the max_tokens budget
         # on invisible reasoning tokens and return truncated/empty content.
@@ -96,10 +99,11 @@ def _groq(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
-def _gemini(cfg: Config, prompt: str, system: str, max_tokens: int) -> str:
+def _gemini(cfg: Config, prompt: str, system: str, max_tokens: int,
+            temperature: float = 0.8) -> str:
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.8},
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature},
     }
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}

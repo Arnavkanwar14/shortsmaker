@@ -213,3 +213,11 @@ review/adjust the track, and custom-script input for TTS.
 
 ## SupoClip comparison (2026-11-13)
 docs/COMPARISON.md lists what to borrow from SupoClip; its AssemblyAI transcription, per-window LLM calls + rerank, retry loops and Next.js/Redis/Postgres stack are rejected (paid / break the Groq budget rule / single-user tool) -- do not re-propose them.
+
+## Clip finding v2 (2026-11-13, stages/highlights.py) -- decisions to respect
+- Rubric is four subscores, hook / peak / coherence / payoff, 0-25 each. The total is summed in code, never taken from the model. Grading runs at temperature 0.2.
+- Still ONE highlights call per run. Groq free tier is 8000 tokens/min (prompt + reply): every candidate gets scores, only the top num_clips+1 get upload metadata (the rest use the local template). Long videos drop the transcript and grade up to MAX_POOL=24 candidates with one sentence of context each side, capped by LISTING_CHARS. Do not put full metadata back on every candidate or raise the pool without re-checking that limit.
+- Picks are snapped to sentence boundaries after ranking (snap_clip), may never overlap, and are saved ranked best-first (clip_01 = best, not earliest). num_clips is a ceiling: picks under MIN_VIRAL are dropped rather than padded.
+- Action video is mostly wordless, so the model's total counts for 0.5 there (0.7 for talk/funny) and the floor is lower. Don't "fix" low action scores by loosening the talk rubric.
+- Candidate windows are built in the ideal range inside the hard min..max (config.LENGTH_PRESETS); the gap is the room snapping needs.
+- highlights.json is invalidated by HIGHLIGHTS_LOGIC_VERSION; bump it when selection logic changes.

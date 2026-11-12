@@ -76,6 +76,7 @@ async def create_job(
     file: UploadFile | None = File(None),
     num_clips: int = Form(5),
     duration: int = Form(45),
+    clip_length: str = Form(""),
     voice: str = Form("en-US-GuyNeural"),
     style: str = Form("kinetic"),
     llm_provider: str = Form("auto"),
@@ -129,8 +130,8 @@ async def create_job(
                      whole_clip=whole_clip.lower() in ("1", "true", "yes"),
                      trim_bottom_pct=trim_bottom_pct,
                      custom_script=custom_script.strip())
-        cfg.min_duration = max(duration - 15, 15)
-        cfg.max_duration = duration + 15
+        cfg.clip_length = clip_length
+        cfg.apply_length()
         cfg.run_id = derive_run_id(cfg.input)
 
         job_id = uuid.uuid4().hex[:12]
