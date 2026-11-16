@@ -254,7 +254,7 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
 
     crop_w = int(h * target_ar) // 2 * 2                # even width
     kfs: list[tuple[float, float, bool]] = []
-    if cfg.face_crop:
+    if cfg.face_crop and cfg.reframe_style != "stream":
         from ..util import read_json
         scenes_file = cfg.run_dir / "scenes.json"
         cuts = read_json(scenes_file) if scenes_file.exists() else []
@@ -277,8 +277,13 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
     # blowing the exact-fill crop up to fill the whole 1080x1920 frame --
     # "tight" is a straight full-bleed crop with no padding (the original
     # behavior, and default). Clamped to the source width.
-    balanced = cfg.reframe_style == "balanced"
-    active_w = min(w, int(crop_w * 1.35)) // 2 * 2 if balanced else crop_w
+    # "stream" is balanced with a fixed centred 4:3 slice and no tracking:
+    # saliency on a livestream chases the busy chat panel and drops the facecam.
+    balanced = cfg.reframe_style in ("balanced", "stream")
+    if cfg.reframe_style == "stream":
+        active_w = min(w, int(h * 4 / 3)) // 2 * 2
+    else:
+        active_w = min(w, int(crop_w * 1.35)) // 2 * 2 if balanced else crop_w
 
     if len(kfs) >= 2:
         x_part = f"x='{_crop_x_mixed_expr(kfs, active_w, w)}'"

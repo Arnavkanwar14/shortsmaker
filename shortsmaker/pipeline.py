@@ -231,7 +231,7 @@ def run(cfg: Config, progress=None) -> dict:
             # re-voice-as-is (whole_clip) leaves the finished short's framing
             # completely alone -- no lock-on, no zoom. Auto-reframe only runs
             # when we're actually cutting a reel out of a longer video.
-            if cfg.face_crop and not cfg.whole_clip:
+            if cfg.face_crop and not cfg.whole_clip and cfg.reframe_style != "stream":
                 reframe_file = clip_dir / "reframe.json"
                 if not reframe_file.exists():
                     scenes_file = run_dir / "scenes.json"
