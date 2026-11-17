@@ -230,6 +230,12 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
 
     target_ar = cfg.out_width / cfg.out_height          # 9/16
 
+    # "stream": the whole frame, no crop or zoom, black bars top and bottom.
+    # Any crop of a livestream risks cutting the streamer's facecam out.
+    if cfg.reframe_style == "stream":
+        return (f"{watermark_trim}scale={cfg.out_width}:-2:flags=lanczos,"
+                f"pad={cfg.out_width}:{cfg.out_height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1")
+
     # subject-following reframe track (auto-generated or hand-edited) drives
     # the whole crop when present: a fixed-zoom 9:16 window panning over time
     # onto the subject. Unlike the face-crop path below it also punches IN
@@ -254,7 +260,7 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
 
     crop_w = int(h * target_ar) // 2 * 2                # even width
     kfs: list[tuple[float, float, bool]] = []
-    if cfg.face_crop and cfg.reframe_style != "stream":
+    if cfg.face_crop:
         from ..util import read_json
         scenes_file = cfg.run_dir / "scenes.json"
         cuts = read_json(scenes_file) if scenes_file.exists() else []
@@ -277,13 +283,8 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
     # blowing the exact-fill crop up to fill the whole 1080x1920 frame --
     # "tight" is a straight full-bleed crop with no padding (the original
     # behavior, and default). Clamped to the source width.
-    # "stream" is balanced with a fixed centred 4:3 slice and no tracking:
-    # saliency on a livestream chases the busy chat panel and drops the facecam.
-    balanced = cfg.reframe_style in ("balanced", "stream")
-    if cfg.reframe_style == "stream":
-        active_w = min(w, int(h * 4 / 3)) // 2 * 2
-    else:
-        active_w = min(w, int(crop_w * 1.35)) // 2 * 2 if balanced else crop_w
+    balanced = cfg.reframe_style == "balanced"
+    active_w = min(w, int(crop_w * 1.35)) // 2 * 2 if balanced else crop_w
 
     if len(kfs) >= 2:
         x_part = f"x='{_crop_x_mixed_expr(kfs, active_w, w)}'"
