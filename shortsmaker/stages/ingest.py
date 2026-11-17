@@ -86,8 +86,8 @@ def run(cfg: Config) -> Path:
         if not source.exists():
             shutil.copy2(src, source)
         write_json(run_dir / "meta.json",
-                   {"title": src.stem.replace("_", " ").replace("-", " "),
-                    "uploader": "", "description": ""})
+                   {"title": cfg.source_title or src.stem.replace("_", " ").replace("-", " "),
+                    "uploader": cfg.source_uploader, "description": ""})
 
     info = ffprobe_video(source)
     log.info("source: %dx%d %s, %.1fs, %.1f fps", info["width"], info["height"],

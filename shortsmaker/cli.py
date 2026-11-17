@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--trim-silence", dest="trim_silence",
                    choices=["auto", "on", "off"],
                    help="jump-cut dead air and um/uh fillers (default auto)")
+    r.add_argument("--source-title", dest="source_title",
+                   help="local file: the real title of the source (used for SEO metadata)")
+    r.add_argument("--source-uploader", dest="source_uploader",
+                   help="local file: the creator/streamer name (used for SEO metadata)")
     r.add_argument("--focus", help="keywords/description of wanted moments, "
                                    "e.g. 'boss fight' or 'funny fails'")
     r.add_argument("--clips", dest="manual_clips",

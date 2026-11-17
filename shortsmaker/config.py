@@ -32,6 +32,8 @@ class Config:
     # ---- ingest ----
     target_fps: int = 30
     max_height: int = 1080          # normalize tall sources down to this
+    source_title: str = ""          # local files: the real source title/uploader for
+    source_uploader: str = ""       # SEO metadata (default: the file name, no uploader)
 
     # ---- transcribe ----
     whisper_model: str = "small"    # tiny/base/small/medium/large-v3
