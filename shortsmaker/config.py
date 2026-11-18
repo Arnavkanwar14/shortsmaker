@@ -34,6 +34,7 @@ class Config:
     max_height: int = 1080          # normalize tall sources down to this
     source_title: str = ""          # local files: the real source title/uploader for
     source_uploader: str = ""       # SEO metadata (default: the file name, no uploader)
+    title_note: str = ""            # extra rule for the generated YouTube title (e.g. "no people's names")
 
     # ---- transcribe ----
     whisper_model: str = "small"    # tiny/base/small/medium/large-v3

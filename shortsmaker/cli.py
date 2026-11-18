@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="jump-cut dead air and um/uh fillers (default auto)")
     r.add_argument("--source-title", dest="source_title",
                    help="local file: the real title of the source (used for SEO metadata)")
+    r.add_argument("--title-note", dest="title_note",
+                   help="extra rule for the generated YouTube title, e.g. 'never use a person's name'")
     r.add_argument("--source-uploader", dest="source_uploader",
                    help="local file: the creator/streamer name (used for SEO metadata)")
     r.add_argument("--focus", help="keywords/description of wanted moments, "
