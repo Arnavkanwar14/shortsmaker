@@ -213,7 +213,7 @@ def _crop_x_mixed_expr(kfs: list[tuple[float, float, bool]], crop_w: int, w: int
     return f"trunc(({'+'.join(terms)})/2)*2"
 
 
-GAMEPLAY_ZOOM = 1.15    # split layout: how far the gameplay panel punches in
+GAMEPLAY_ZOOM = 1.0     # split layout: gameplay punch-in (1.15 read as too zoomed; wider shows the cam twice)
 
 
 def crop_filter(cfg: Config, video: Path, clip: dict,
