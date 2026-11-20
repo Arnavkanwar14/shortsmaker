@@ -213,11 +213,16 @@ def _crop_x_mixed_expr(kfs: list[tuple[float, float, bool]], crop_w: int, w: int
     return f"trunc(({'+'.join(terms)})/2)*2"
 
 
+GAMEPLAY_ZOOM = 1.15    # split layout: how far the gameplay panel punches in
+
+
 def crop_filter(cfg: Config, video: Path, clip: dict,
                 keeps: list[tuple[float, float]] | None = None,
-                reframe_track: list[dict] | None = None) -> str:
+                reframe_track: list[dict] | None = None,
+                cam_box: list[float] | None = None) -> str:
     info = ffprobe_video(video)
     w, h = info["width"], info["height"]
+    src_h = h
 
     # user-specified watermark trim: crop a sliver off the bottom edge
     # before any other framing decision. Never automatic -- only applied
@@ -230,9 +235,37 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
 
     target_ar = cfg.out_width / cfg.out_height          # 9/16
 
+    # "split": the streamer's facecam fills the top 30-40% (sized to the cam's
+    # own shape), a slightly zoomed centre crop of the gameplay fills the
+    # rest. No cam box (none detected, none given) falls back to "stream".
+    if cfg.reframe_style == "split":
+        if cam_box:
+            ow, oh = cfg.out_width, cfg.out_height
+            ev = lambda v: max(2, int(v) // 2 * 2)
+            inset = 4                   # keep the cam's edge/border off-screen
+            cx, cy = ev(cam_box[0] * w + inset), ev(cam_box[1] * src_h + inset)
+            cw = ev(min(cam_box[2] * w - 2 * inset, w - cx))
+            ch = ev(min(cam_box[3] * src_h - 2 * inset, h - cy))
+            top_h = ev(min(max(ow * ch / cw, oh * 0.30), oh * 0.40))
+            bot_h = oh - top_h
+            gh = ev(h / GAMEPLAY_ZOOM)
+            gw = ev(min(w, gh * ow / bot_h))
+            log.info("split layout: cam %dx%d at (%d,%d) -> top %dpx, gameplay %dx%d centre",
+                     cw, ch, cx, cy, top_h, gw, gh)
+            return (
+                f"{watermark_trim}split=2[cam0][game0];"
+                f"[cam0]crop={cw}:{ch}:{cx}:{cy},"
+                f"scale={ow}:{top_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={ow}:{top_h},setsar=1[cam];"
+                f"[game0]crop={gw}:{gh}:(iw-{gw})/2:(ih-{gh})/2,"
+                f"scale={ow}:{bot_h}:flags=lanczos,setsar=1[game];"
+                f"[cam][game]vstack"
+            )
+        log.info("split layout: no facecam found, using the stream layout")
+
     # "stream": the whole frame, no crop or zoom, black bars top and bottom.
     # Any crop of a livestream risks cutting the streamer's facecam out.
-    if cfg.reframe_style == "stream":
+    if cfg.reframe_style in ("stream", "split"):
         return (f"{watermark_trim}scale={cfg.out_width}:-2:flags=lanczos,"
                 f"pad={cfg.out_width}:{cfg.out_height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1")
 
@@ -342,7 +375,16 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
     reframe_file = clip_dir / "reframe.json"
     reframe_track = read_json(reframe_file) if reframe_file.exists() else None
 
-    vf = crop_filter(cfg, video, clip, keeps, reframe_track=reframe_track)
+    cam_box = None
+    if cfg.reframe_style == "split":
+        cam_file = clip_dir / "facecam.json"
+        if cfg.facecam:
+            cam_box = [float(v) for v in cfg.facecam.split(",")]
+        elif cam_file.exists():
+            cam_box = read_json(cam_file)
+
+    vf = crop_filter(cfg, video, clip, keeps, reframe_track=reframe_track,
+                     cam_box=cam_box)
     with_captions = cfg.style != "none" and caption_words
     # ffmpeg is run with cwd=clip_dir so the ass filter gets a plain relative
     # filename -- avoids Windows drive-colon escaping issues in filtergraphs.

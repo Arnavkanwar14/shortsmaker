@@ -221,3 +221,6 @@ docs/COMPARISON.md lists what to borrow from SupoClip; its AssemblyAI transcript
 - Action video is mostly wordless, so the model's total counts for 0.5 there (0.7 for talk/funny) and the floor is lower. Don't "fix" low action scores by loosening the talk rubric.
 - Candidate windows are built in the ideal range inside the hard min..max (config.LENGTH_PRESETS); the gap is the room snapping needs.
 - highlights.json is invalidated by HIGHLIGHTS_LOGIC_VERSION; bump it when selection logic changes.
+
+## Split layout (--reframe-style split, 2026-11-20)
+Streamer facecam on top (30-40%, sized to the cam's shape), 1.15x centre gameplay below. facecam.py auto-detects the cam box per clip (steady haar face, minNeighbors 4 -- 6 missed a head-turning streamer -- then walk out to edges persistent across frames, Canny 20/60 -- 40/120 missed a faint cam border) into clip_dir/facecam.json; `--facecam x,y,w,h` overrides; no cam found falls back to the stream layout, never a guessed crop. Verified on a real xQc GTA 6 window.

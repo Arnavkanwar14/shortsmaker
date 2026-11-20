@@ -105,6 +105,8 @@ class Config:
     face_crop: bool = True          # mediapipe face-aware crop, else center
     reframe_style: str = "tight"    # tight | balanced (less zoom, blurred
                                     # top/bottom fill -- see assemble.crop_filter)
+    facecam: str = ""               # split style: "x,y,w,h" cam box as frame
+                                    # fractions; empty = auto-detect per clip
     trim_bottom_pct: float = 0.0    # 0-1: crop this fraction off the bottom
                                     # edge before framing (e.g. 0.08 to cut
                                     # a burned-in watermark off a source

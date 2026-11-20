@@ -29,7 +29,7 @@ RENDER_SETTINGS_KEYS = [
     "voiceover", "tts_engine", "voice", "kokoro_voice", "piper_model",
     "vo_volume", "bg_audio_volume", "style", "caption_preset",
     "caption_position", "reframe_style", "face_crop", "llm_provider",
-    "trim_silence", "silence_gap", "trim_bottom_pct",
+    "trim_silence", "silence_gap", "trim_bottom_pct", "facecam",
 ]
 
 # Bump this whenever script/tts render LOGIC changes in a way that isn't
@@ -231,7 +231,16 @@ def run(cfg: Config, progress=None) -> dict:
             # re-voice-as-is (whole_clip) leaves the finished short's framing
             # completely alone -- no lock-on, no zoom. Auto-reframe only runs
             # when we're actually cutting a reel out of a longer video.
-            if cfg.face_crop and not cfg.whole_clip and cfg.reframe_style != "stream":
+            # split layout: find the streamer's facecam box once per clip,
+            # saved as facecam.json (hand-editable, delete to re-detect)
+            if cfg.reframe_style == "split" and not cfg.facecam:
+                cam_file = clip_dir / "facecam.json"
+                if not cam_file.exists():
+                    from . import facecam
+                    write_json(cam_file, facecam.detect(video, clip["start"], clip["end"]))
+
+            if (cfg.face_crop and not cfg.whole_clip
+                    and cfg.reframe_style not in ("stream", "split")):
                 reframe_file = clip_dir / "reframe.json"
                 if not reframe_file.exists():
                     scenes_file = run_dir / "scenes.json"

@@ -67,9 +67,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--caption-position", dest="caption_position",
                    choices=["lower", "center"])
     r.add_argument("--reframe-style", dest="reframe_style",
-                   choices=["tight", "balanced", "stream"],
+                   choices=["tight", "balanced", "stream", "split"],
                    help="tight = full-bleed crop (default); balanced = wider, "
-                        "less-zoomed crop with blurred top/bottom fill; stream = whole frame, no crop or zoom, black bars top/bottom (livestreams)")
+                        "less-zoomed crop with blurred top/bottom fill; stream = whole frame, no crop or zoom, black bars top/bottom (livestreams); "
+                        "split = streamer's facecam on top (30-40%%), zoomed centre gameplay below")
+    r.add_argument("--facecam",
+                   help="split style: facecam box 'x,y,w,h' as fractions of the "
+                        "frame, e.g. 0,0.5,0.19,0.27 (default: auto-detect)")
     r.add_argument("--trim-bottom", dest="trim_bottom_pct", type=float,
                    help="0..1: fraction to crop off the bottom edge before "
                         "framing, e.g. 0.08 to remove a burned-in watermark "
