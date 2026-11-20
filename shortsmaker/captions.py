@@ -96,9 +96,13 @@ def _phrase_text_kinetic(phrase: list[dict], y: int, upper_keywords: bool) -> st
 
 
 def build_ass(words: list[dict], style: str = "kinetic",
-              preset: str = "bold", position: str = "lower") -> str:
+              preset: str = "bold", position: str = "lower",
+              y: int | None = None) -> str:
+    """y: explicit caption centre line (output pixels), overriding position."""
     p = PRESETS.get(preset, PRESETS["bold"])
-    y = POSITIONS.get(position, POSITIONS["lower"])
+    pinned = y is not None
+    if not pinned:
+        y = POSITIONS.get(position, POSITIONS["lower"])
     out = [HEADER.format(font=p["font"], size=p["size"], accent=p["accent"],
                          base=p["base"], outline=p["outline"],
                          plain_size=max(p["size"] - 16, 56))]
@@ -111,11 +115,14 @@ def build_ass(words: list[dict], style: str = "kinetic",
             out.append(f"Dialogue: 0,{_ts(start)},{_ts(end)},Kinetic,,0,0,0,,{text}\n")
         else:
             plain = " ".join(w["text"] for w in phrase)
+            if pinned:
+                plain = rf"{{\an5\pos(540,{y})}}" + plain
             out.append(f"Dialogue: 0,{_ts(start)},{_ts(end)},Plain,,0,0,0,,{plain}\n")
     return "".join(out)
 
 
 def write_ass(words: list[dict], path: Path, style: str = "kinetic",
-              preset: str = "bold", position: str = "lower") -> Path:
-    path.write_text(build_ass(words, style, preset, position), encoding="utf-8")
+              preset: str = "bold", position: str = "lower",
+              y: int | None = None) -> Path:
+    path.write_text(build_ass(words, style, preset, position, y), encoding="utf-8")
     return path

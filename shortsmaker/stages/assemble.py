@@ -216,6 +216,19 @@ def _crop_x_mixed_expr(kfs: list[tuple[float, float, bool]], crop_w: int, w: int
 GAMEPLAY_ZOOM = 1.0     # split layout: gameplay punch-in (1.15 read as too zoomed; wider shows the cam twice)
 
 
+def split_cam(cfg: Config, cam_box: list[float], w: int, src_h: int, h: int):
+    """Split layout geometry: cam crop (x, y, w, h) in source pixels and the
+    height of the top panel (= where the cam/gameplay seam sits)."""
+    ev = lambda v: max(2, int(v) // 2 * 2)
+    inset = 4                   # keep the cam's edge/border off-screen
+    cx, cy = ev(cam_box[0] * w + inset), ev(cam_box[1] * src_h + inset)
+    cw = ev(min(cam_box[2] * w - 2 * inset, w - cx))
+    ch = ev(min(cam_box[3] * src_h - 2 * inset, h - cy))
+    top_h = ev(min(max(cfg.out_width * ch / cw, cfg.out_height * 0.30),
+                   cfg.out_height * 0.40))
+    return cx, cy, cw, ch, top_h
+
+
 def crop_filter(cfg: Config, video: Path, clip: dict,
                 keeps: list[tuple[float, float]] | None = None,
                 reframe_track: list[dict] | None = None,
@@ -242,11 +255,7 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
         if cam_box:
             ow, oh = cfg.out_width, cfg.out_height
             ev = lambda v: max(2, int(v) // 2 * 2)
-            inset = 4                   # keep the cam's edge/border off-screen
-            cx, cy = ev(cam_box[0] * w + inset), ev(cam_box[1] * src_h + inset)
-            cw = ev(min(cam_box[2] * w - 2 * inset, w - cx))
-            ch = ev(min(cam_box[3] * src_h - 2 * inset, h - cy))
-            top_h = ev(min(max(ow * ch / cw, oh * 0.30), oh * 0.40))
+            cx, cy, cw, ch, top_h = split_cam(cfg, cam_box, w, src_h, h)
             bot_h = oh - top_h
             gh = ev(h / GAMEPLAY_ZOOM)
             gw = ev(min(w, gh * ow / bot_h))
@@ -365,10 +374,6 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
     if vo_audio is not None:
         vo_audio = vo_audio.resolve()
 
-    ass_file = clip_dir / "captions.ass"
-    write_ass(caption_words, ass_file, style=cfg.style,
-              preset=cfg.caption_preset, position=cfg.caption_position)
-
     # a hand-edited or auto-generated reframe track lives beside the clip;
     # if present it drives the crop (subject-following zoom+pan)
     from ..util import read_json
@@ -376,12 +381,24 @@ def run(cfg: Config, video: Path, clip: dict, clip_dir: Path,
     reframe_track = read_json(reframe_file) if reframe_file.exists() else None
 
     cam_box = None
+    caption_y = None
     if cfg.reframe_style == "split":
         cam_file = clip_dir / "facecam.json"
         if cfg.facecam:
             cam_box = [float(v) for v in cfg.facecam.split(",")]
         elif cam_file.exists():
             cam_box = read_json(cam_file)
+        if cam_box:
+            # captions sit on the cam/gameplay seam: off the streamer's
+            # face and clear of the game's own subtitles at the bottom
+            info = ffprobe_video(video)
+            trim = int(info["height"] * cfg.trim_bottom_pct) // 2 * 2
+            caption_y = split_cam(cfg, cam_box, info["width"], info["height"],
+                                  info["height"] - trim)[4]
+
+    ass_file = clip_dir / "captions.ass"
+    write_ass(caption_words, ass_file, style=cfg.style,
+              preset=cfg.caption_preset, position=cfg.caption_position, y=caption_y)
 
     vf = crop_filter(cfg, video, clip, keeps, reframe_track=reframe_track,
                      cam_box=cam_box)
