@@ -214,13 +214,28 @@ def _crop_x_mixed_expr(kfs: list[tuple[float, float, bool]], crop_w: int, w: int
 
 
 GAMEPLAY_ZOOM = 1.0     # split layout: gameplay punch-in (1.15 read as too zoomed; wider shows the cam twice)
+# the cam is always upscaled ~3x into the top panel; a light unsharp brings
+# back the edge detail lanczos softens (same strength SupoClip uses)
+CAM_SHARPEN = "unsharp=5:5:0.6:5:5:0.0"
+
+
+def gameplay_x(w: int, gw: int, cam_x: int, cam_w: int) -> int:
+    """Left edge of the gameplay crop: centred, unless that would show the
+    cam a second time, then moved the least distance that clears it (if the
+    frame has room on either side)."""
+    gx = (w - gw) // 2
+    if gx + gw <= cam_x or gx >= cam_x + cam_w:
+        return gx
+    options = [x for x in (cam_x - gw, cam_x + cam_w) if 0 <= x <= w - gw]
+    return min(options, key=lambda x: abs(x - gx)) if options else gx
 
 
 def split_cam(cfg: Config, cam_box: list[float], w: int, src_h: int, h: int):
     """Split layout geometry: cam crop (x, y, w, h) in source pixels and the
     height of the top panel (= where the cam/gameplay seam sits)."""
     ev = lambda v: max(2, int(v) // 2 * 2)
-    inset = 4                   # keep the cam's edge/border off-screen
+    # keep the cam's border/glow off-screen; borders scale with the cam
+    inset = max(4, int(cam_box[2] * w * 0.015))
     cx, cy = ev(cam_box[0] * w + inset), ev(cam_box[1] * src_h + inset)
     cw = ev(min(cam_box[2] * w - 2 * inset, w - cx))
     ch = ev(min(cam_box[3] * src_h - 2 * inset, h - cy))
@@ -259,14 +274,15 @@ def crop_filter(cfg: Config, video: Path, clip: dict,
             bot_h = oh - top_h
             gh = ev(h / GAMEPLAY_ZOOM)
             gw = ev(min(w, gh * ow / bot_h))
-            log.info("split layout: cam %dx%d at (%d,%d) -> top %dpx, gameplay %dx%d centre",
-                     cw, ch, cx, cy, top_h, gw, gh)
+            gx = ev(gameplay_x(w, gw, int(cam_box[0] * w), int(cam_box[2] * w)))
+            log.info("split layout: cam %dx%d at (%d,%d) -> top %dpx, gameplay %dx%d at x=%d",
+                     cw, ch, cx, cy, top_h, gw, gh, gx)
             return (
                 f"{watermark_trim}split=2[cam0][game0];"
                 f"[cam0]crop={cw}:{ch}:{cx}:{cy},"
                 f"scale={ow}:{top_h}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={ow}:{top_h},setsar=1[cam];"
-                f"[game0]crop={gw}:{gh}:(iw-{gw})/2:(ih-{gh})/2,"
+                f"crop={ow}:{top_h},{CAM_SHARPEN},setsar=1[cam];"
+                f"[game0]crop={gw}:{gh}:{gx}:(ih-{gh})/2,"
                 f"scale={ow}:{bot_h}:flags=lanczos,setsar=1[game];"
                 f"[cam][game]vstack"
             )
