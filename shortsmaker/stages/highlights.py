@@ -639,8 +639,14 @@ def finalize_metadata(g: dict, channel: dict) -> dict:
     text to paste into YouTube (hook + story + related-searches + CTA +
     hashtag line); hashtags/tags are also returned separately for the API.
     """
-    title = str(g.get("title", "")).strip().lstrip("#")[:100]
-    body = str(g.get("description", "")).strip()
+    # plain ASCII punctuation: the model sometimes emits non-breaking
+    # hyphens/curly quotes that show up as odd glyphs in titles and files
+    ascii_punct = str.maketrans({"‐": "-", "‑": "-", "‒": "-",
+                                 "–": "-", "—": "-", "‘": "'",
+                                 "’": "'", "“": '"', "”": '"',
+                                 " ": " ", "…": "..."})
+    title = str(g.get("title", "")).translate(ascii_punct).strip().strip('"').lstrip("#")[:100]
+    body = str(g.get("description", "")).translate(ascii_punct).strip()
     related = str(g.get("related", "")).strip()
 
     # hashtags: channel-fixed (branded consistency) override the LLM's;
@@ -914,16 +920,29 @@ def llm_virality(cfg: Config, segments: list[dict], candidates: list[dict],
         "just id, the four subscores, hook_type and reason. For your "
         f"{n_meta} highest-scoring candidates ONLY, add these upload "
         "metadata fields to the same object:\n"
-        "- title: <=70 chars, NO hashtags, NO emoji, NO quotes. Front-load the "
-        "main subject/keyword people would search, then open a curiosity gap "
-        "and do NOT reveal the payoff (make them click to find out). Use an "
-        "impossible-sounding statement, an incomplete reveal, a direct 'you', "
-        "or an irony/contradiction. "
+        "- title: 40-65 chars, NO hashtags, NO emoji, NO quotes, plain ASCII "
+        "punctuation. Start with the main subject people search for (the "
+        "game, show, person or topic). Then ONE specific, true hook about the "
+        "single most surprising, funny or dramatic moment, built on its "
+        "CONCRETE detail (the object, vehicle, place, character, number, "
+        "mistake). Specific is what gets the click: tease the situation, "
+        "withhold the outcome. Patterns that work: stakes ('He bet everything "
+        "on one stolen boat'), contradiction ('The cops chased the wrong car "
+        "the whole time'), specific superlative ('The fastest heist fail in "
+        "GTA 6'), direct question ('Would you take this deal?'). BANNED: hype "
+        "with no detail ('the wildest moment ever', 'nobody expected this', "
+        "'you won't believe', 'goes wrong'), bare topic labels ('boat chase | "
+        "never leave', 'first look | open world'), profanity, anything the "
+        "clip does not actually show, and quoting a garbled or misheard "
+        "transcript line -- describe what happens instead. "
         f"{cfg.title_note + ' ' if cfg.title_note else ''}\n"
-        "- description: a hook line matching the title's energy, then tell it "
-        "in order -- setup, then the key fact, then the twist. Name the "
-        "subject in the first sentence (SEO). No hashtags and no call-to-"
-        "action in the text (both are added automatically).\n"
+        "- description: 2-3 short sentences, 200-400 chars. Sentence 1 "
+        "restates the hook in different words and names the subject plus "
+        "its common search variants (e.g. 'GTA 6 (Grand Theft Auto VI)'). "
+        "Then what happens, in order -- setup, then the turning point -- "
+        "stopping before the payoff. Use concrete searchable nouns "
+        "(characters, places, vehicles, missions, items). No profanity, no "
+        "hashtags and no call-to-action (both are added automatically).\n"
         "- related: 4-6 comma-separated search phrases people type to find this.\n"
         "- hashtags: exactly 5, no # symbol, ordered specific->niche->broad "
         "(main subject, then subject+facts/lore, then niche, then broad like "
