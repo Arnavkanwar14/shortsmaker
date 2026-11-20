@@ -65,6 +65,44 @@ def _border(edge: np.ndarray, pos: int, stop: int, band: tuple[int, int],
     return stop
 
 
+ROUND_CAM_ASPECT = 1080 / (1920 * 0.40)   # top panel shape a round cam fills
+RING_EDGE = 0.4      # share of a round cam's ring that is a persistent edge
+RING_STEP = 0.8      # share of the ring where outside changes much more than inside
+
+
+def _circle(edge: np.ndarray, change: np.ndarray, fcx: float, fcy: float, fw: int):
+    """A round cam: the circle around the face where the moving gameplay
+    outside meets the still cam background inside, along a persistent edge.
+    (Edges alone are ambiguous: the cam's own room is static and full of
+    them.) Returns (cx, cy, r, step_share) or None."""
+    import cv2
+    h, w = edge.shape
+    ring_hit = cv2.dilate(edge, np.ones((3, 3), np.uint8)) >= 0.5  # ring may sit 1px off
+    ang = np.linspace(0, 2 * np.pi, 96, endpoint=False)
+    cos, sin = np.cos(ang), np.sin(ang)
+    radii = np.arange(int(fw * 1.2), int(fw * 4.5), 2)[:, None]
+    best = None
+    step = max(2, fw // 15)
+    for cy in range(int(fcy - fw), int(fcy + fw) + 1, step):
+        for cx in range(int(fcx - fw), int(fcx + fw) + 1, step):
+            xo, yo = (cx + (radii + 6) * cos).astype(int), (cy + (radii + 6) * sin).astype(int)
+            # a ring running off the frame cannot be a cam border
+            ok = ((xo >= 0) & (xo < w) & (yo >= 0) & (yo < h)).all(axis=1)
+            if not ok.any():
+                continue
+            xo, yo = xo.clip(0, w - 1), yo.clip(0, h - 1)
+            xi, yi = (cx + (radii - 6) * cos).astype(int).clip(0, w - 1), (cy + (radii - 6) * sin).astype(int).clip(0, h - 1)
+            xr, yr = (cx + radii * cos).astype(int).clip(0, w - 1), (cy + radii * sin).astype(int).clip(0, h - 1)
+            stepped = (change[yo, xo] > change[yi, xi] * 1.5 + 2).mean(axis=1)
+            ringed = ring_hit[yr, xr].mean(axis=1)
+            score = np.where(ok & (stepped >= RING_STEP) & (ringed >= RING_EDGE),
+                             stepped * ringed, 0)
+            i = int(score.argmax())
+            if score[i] > 0 and (best is None or score[i] > best[4]):
+                best = (cx, cy, int(radii[i, 0]), float(stepped[i]), float(score[i]))
+    return best[:4] if best else None
+
+
 def detect(video: Path, start: float, end: float) -> list[float] | None:
     import cv2
     frames = _sample(video, start, end)
@@ -106,8 +144,29 @@ def detect(video: Path, start: float, end: float) -> list[float] | None:
 
     box = [left / w, top / h, (right - left) / w, (bottom - top) / h]
     if box[2] * box[3] > MAX_AREA or box[2] <= 0 or box[3] <= 0:
-        log.info("facecam: box %s too big to be an overlay; no cam", [round(v, 3) for v in box])
-        return None
+        # no straight border: many streamers use a ROUND cam cutout
+        gray = np.stack([cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY) for fr in frames]).astype(np.float32)
+        change = cv2.GaussianBlur(gray.std(axis=0), (0, 0), 2)
+        circle = _circle(edge, change, fx + fw / 2, fy + fh / 2, fw)
+        if circle is None:
+            log.info("facecam: box %s too big to be an overlay and no round cam; no cam",
+                     [round(v, 3) for v in box])
+            return None
+        ccx, ccy, r, cover = circle
+        # largest top-panel-shaped rectangle that fits inside the circle (a
+        # little in from the ring, so no gameplay corners show), centred on
+        # the head rather than the circle: the face usually sits high in a
+        # round cam and a centred box cuts the top of the head off.
+        # Solve (A*u)^2 + (|d| + u)^2 = R^2 for the half-height u.
+        R, A = 0.94 * r, ROUND_CAM_ASPECT
+        d = float(np.clip((fy + fh * 0.5 - ccy) * 0.5, -0.4 * R, 0.4 * R))
+        a, b, c = A * A + 1, 2 * abs(d), d * d - R * R
+        u = (-b + np.sqrt(b * b - 4 * a * c)) / (2 * a)
+        rw, rh = 2 * A * u, 2 * u
+        box = [float((ccx - rw / 2) / w), float((ccy + d - u) / h), float(rw / w), float(rh / h)]
+        log.info("facecam: round cam at (%d,%d) r=%d (outside moves more along %.0f%% of the ring), using %s",
+                 ccx, ccy, r, cover * 100, [round(v, 3) for v in box])
+        return box
     log.info("facecam: face at (%d,%d) %dx%d, cam box %s", fx, fy, fw, fh,
              [round(v, 3) for v in box])
     return box
